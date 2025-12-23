@@ -1,23 +1,37 @@
-// index.js - Chronos V6 (The Decoder & Spy) 🕵️
+// index.js - Chronos V8 (Universal HTML Stripper) 🌪️
 
-const extensionName = "Chronos_V6";
+const extensionName = "Chronos_V8_Universal";
 
 let stats = {
     enabled: true,
     totalSaved: 0,
-    debugRaw: "" // เอาไว้เก็บค่าดิบๆ
+    status: "Ready"
 };
 
 // =================================================================
-// 1. Super Regex: จับทุกรูปแบบ (ปกติ และ แบบถูกแปลงรหัส)
+// 1. Logic: The Universal Stripper (เครื่องโม่แป้ง HTML)
 // =================================================================
-// จับทั้ง <details> และ &lt;details&gt;
-const superRegex = /(?:<|&lt;)details(?:>|&gt;)[\s\S]*?(?:<|&lt;)\/details(?:>|&gt;)/gi;
+// ฟังก์ชันนี้จะแปลง HTML หรูๆ ให้กลายเป็น Text ธรรมดา
+const stripHtmlToText = (html) => {
+    // 1. เปลี่ยน <br>, <p>, </div> ให้เป็น "ขึ้นบรรทัดใหม่" (เพื่อให้ AI อ่านรู้เรื่อง)
+    let text = html.replace(/<br\s*\/?>/gi, '\n')
+                   .replace(/<\/p>/gi, '\n\n')
+                   .replace(/<\/div>/gi, '\n')
+                   .replace(/<\/h[1-6]>/gi, '\n');
+
+    // 2. ลบ Tag HTML ที่เหลือทิ้งทั้งหมด (<...>)
+    text = text.replace(/<[^>]+>/g, '');
+
+    // 3. จัดระเบียบช่องว่าง (ลบช่องว่างซ้ำซ้อน)
+    text = text.replace(/\n\s*\n/g, '\n\n').trim();
+
+    return text;
+};
 
 const estimateTokens = (chars) => Math.round(chars / 3.5);
 
 // =================================================================
-// 2. UI: ลูกแก้ว + หน้าต่าง Spy
+// 2. UI: ลูกแก้วสีม่วง (Universal Mode)
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
@@ -25,37 +39,38 @@ const injectStyles = () => {
         #chronos-orb {
             position: fixed; top: 120px; right: 20px;
             width: 60px; height: 60px;
-            background: rgba(255, 0, 0, 0.2); /* สีแดงจางๆ (Standby) */
-            border: 2px solid #FF5252; border-radius: 50%;
+            background: rgba(0, 0, 0, 0.8);
+            border: 2px solid #D500F9; /* สีม่วงนีออน */
+            border-radius: 50%;
             z-index: 999999; cursor: pointer;
             display: flex; align-items: center; justify-content: center;
-            font-size: 28px; color: #fff;
+            font-size: 28px; color: #E040FB;
+            box-shadow: 0 0 15px rgba(213, 0, 249, 0.5);
             transition: all 0.3s;
-            backdrop-filter: blur(5px);
+            user-select: none;
+            backdrop-filter: blur(4px);
         }
-        #chronos-orb.active { 
-            background: rgba(0, 255, 0, 0.2); 
-            border-color: #00E676; 
-            box-shadow: 0 0 15px #00E676; 
+        #chronos-orb:hover { transform: scale(1.1); box-shadow: 0 0 25px rgba(213, 0, 249, 0.8); }
+        #chronos-orb.working { 
+            background: #D500F9; color: #000; 
+            animation: pulse-purple 1s infinite;
         }
+        
+        @keyframes pulse-purple { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
 
-        #chronos-spy {
+        #chronos-panel {
             position: fixed; top: 120px; right: 90px;
-            width: 300px; padding: 10px;
-            background: #1e1e1e; border: 1px solid #FF5252;
-            color: #ccc; font-family: monospace; font-size: 11px;
+            width: 280px; padding: 15px;
+            background: #121212; border: 1px solid #D500F9;
+            color: #eee; font-family: monospace; font-size: 11px;
             display: none; z-index: 999999;
-            box-shadow: 0 10px 30px #000;
+            box-shadow: 0 10px 40px #000;
+            max-height: 80vh; overflow-y: auto;
         }
-        .raw-box {
-            width: 100%; height: 100px; 
-            background: #000; color: #00FF00; 
-            border: 1px solid #333; overflow: auto;
-            margin-top: 5px; padding: 5px; white-space: pre-wrap;
-        }
-        .btn-spy {
-            width: 100%; padding: 8px; margin-top: 5px; cursor: pointer;
-            background: #333; color: white; border: none;
+        .preview-box {
+            background: #222; border: 1px solid #444; color: #00E676;
+            padding: 8px; margin-top: 5px; max-height: 150px; overflow: auto;
+            white-space: pre-wrap; font-size: 10px;
         }
     `;
     document.head.appendChild(style);
@@ -67,10 +82,10 @@ const createUI = () => {
 
     const orb = document.createElement('div');
     orb.id = 'chronos-orb';
-    orb.innerHTML = '🕵️'; // ไอคอนนักสืบ
+    orb.innerHTML = '🌀'; // พายุหมุน (ดูดทุกอย่าง)
     
     const panel = document.createElement('div');
-    panel.id = 'chronos-spy';
+    panel.id = 'chronos-panel';
 
     orb.onclick = () => {
         panel.style.display = (panel.style.display === 'none') ? 'block' : 'none';
@@ -83,105 +98,93 @@ const createUI = () => {
 
 const renderPanel = (panel) => {
     panel.innerHTML = `
-        <strong style="color:#FF5252;">CHRONOS SPY TOOL</strong><br>
+        <strong style="color:#D500F9;">CHRONOS UNIVERSAL V8</strong><br>
         Saved Tokens: <b style="color:#00E676;">${stats.totalSaved}</b><br>
-        
-        <button class="btn-spy" id="btn-spy-now">
-            🔍 กดเพื่อดู "ไส้ใน" ข้อความล่าสุด
+        -----------------------------<br>
+        <button onclick="checkLatestConversion()" style="width:100%; padding:5px; background:#333; color:white; border:1px solid #D500F9; cursor:pointer;">
+            🔍 เช็คข้อความล่าสุด (Preview)
         </button>
-        
-        <div style="margin-top:5px;">Code ที่บอทส่งมาจริง (Raw):</div>
-        <div class="raw-box" id="raw-display">...</div>
+        <div style="margin-top:5px;">AI จะเห็นแบบนี้:</div>
+        <div id="preview-area" class="preview-box">...</div>
     `;
-
-    setTimeout(() => {
-        const btn = document.getElementById('btn-spy-now');
-        if(btn) btn.onclick = runSpy;
-    }, 100);
 };
 
-// =================================================================
-// 3. Logic: SPY (กดดูไส้ใน) -> เอาไว้เช็คว่าทำไมไม่ทำงาน
-// =================================================================
-const runSpy = () => {
+// ฟังก์ชันสำหรับปุ่มเช็ค (ให้เห็นภาพก่อนส่งจริง)
+window.checkLatestConversion = () => {
     if (typeof SillyTavern === 'undefined') return;
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
     
-    if (chat.length === 0) {
-        document.getElementById('raw-display').innerText = "ไม่มีข้อความในแชท";
+    // หาข้อความบอทล่าสุด
+    let lastMsg = "";
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (!chat[i].is_user) { lastMsg = chat[i].mes; break; }
+    }
+
+    if (!lastMsg) {
+        document.getElementById('preview-area').innerText = "ไม่พบข้อความบอท";
         return;
     }
 
-    // หาข้อความล่าสุดของบอท
-    let lastBotMsg = "หาข้อความบอทไม่เจอ";
-    for (let i = chat.length - 1; i >= 0; i--) {
-        if (!chat[i].is_user) {
-            lastBotMsg = chat[i].mes; // นี่คือ RAW CODE จริงๆ
-            break;
-        }
-    }
-
-    // โชว์ในกล่อง
-    const displayBox = document.getElementById('raw-display');
-    displayBox.innerText = lastBotMsg.substring(0, 500); // ตัดมาแค่ 500 ตัวแรกพอ
-    
-    // ลองเทส Regex เดี๋ยวนี้เลย
-    if (superRegex.test(lastBotMsg)) {
-        displayBox.style.borderColor = "#00E676"; // สีเขียว = จับได้!
-        alert("✅ Regex จับเจอ! (ระบบควรจะทำงานแล้ว)");
+    // ทดลองแปลง
+    if (lastMsg.includes('<') && lastMsg.includes('>')) {
+        const cleanText = stripHtmlToText(lastMsg);
+        document.getElementById('preview-area').innerText = cleanText;
     } else {
-        displayBox.style.borderColor = "#FF5252"; // สีแดง = จับไม่ได้
-        alert("❌ Regex ยังจับไม่เจอ... ลองดูโค้ดในกล่องดำซิว่ามันเขียนว่าอะไร");
+        document.getElementById('preview-area').innerText = "(ข้อความนี้ไม่มี HTML)";
     }
 };
 
 // =================================================================
-// 4. Logic: ตัดจริง (Execution)
+// 3. Logic: ตัดจริงตอนส่ง (Execution)
 // =================================================================
 const optimizePayload = (data) => {
     if (!stats.enabled) return data;
 
-    let charsSavedInThisRound = 0;
-    
+    // เปลี่ยนสีลูกแก้ว
+    const orb = document.getElementById('chronos-orb');
+    if (orb) orb.classList.add('working');
+
+    let charsSaved = 0;
+
     if (data.body && data.body.messages) {
         data.body.messages.forEach(msg => {
-            // ใช้ Super Regex จับ
-            if (msg.content && superRegex.test(msg.content)) {
+            // เช็คว่ามี HTML Tag ไหม (ถ้ามี <...> แสดงว่ามีโอกาสเป็นโค้ด)
+            if (msg.content && /<[^>]+>/.test(msg.content)) {
                 
                 const oldLen = msg.content.length;
                 
-                // แทนที่ด้วย Text สั้น
-                msg.content = msg.content.replace(superRegex, '[Time Window Info]');
+                // --- ขั้นตอนการล้างบาง ---
+                // แปลง HTML ทั้งก้อน ให้เหลือแต่ Text
+                const cleanText = stripHtmlToText(msg.content);
                 
+                // ใส่ Header นิดหน่อยให้ AI รู้ว่านี่คือข้อมูล System/Context
+                // (ถ้ามันยาวๆ มักจะเป็น Status หรือ OOC)
+                msg.content = `[System/Display Content:\n${cleanText}]`;
+
                 const newLen = msg.content.length;
-                charsSavedInThisRound += (oldLen - newLen);
+                charsSaved += (oldLen - newLen);
             }
         });
     }
 
-    if (charsSavedInThisRound > 0) {
-        const tokens = estimateTokens(charsSavedInThisRound);
+    if (charsSaved > 0) {
+        const tokens = estimateTokens(charsSaved);
         stats.totalSaved += tokens;
-        
-        // เปลี่ยนลูกแก้วเป็นสีเขียว
-        const orb = document.getElementById('chronos-orb');
-        if (orb) {
-            orb.classList.add('active');
-            orb.innerHTML = '⚡';
-            setTimeout(() => {
-                orb.classList.remove('active');
-                orb.innerHTML = '🕵️';
-            }, 2000); // โชว์สีเขียว 2 วิ
-        }
-        console.log(`[Chronos] Saved ${tokens} tokens.`);
+        console.log(`[Chronos V8] Stripped HTML. Saved ~${tokens} tokens.`);
     }
+
+    setTimeout(() => {
+        if (orb) orb.classList.remove('working');
+        const panel = document.getElementById('chronos-panel');
+        if(panel && panel.style.display === 'block') renderPanel(panel);
+    }, 1000);
 
     return data;
 };
 
 // =================================================================
-// 5. Start
+// 4. Start
 // =================================================================
 injectStyles();
 setTimeout(createUI, 1500);
@@ -189,6 +192,6 @@ setTimeout(createUI, 1500);
 if (typeof SillyTavern !== 'undefined') {
     SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
     SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
-    console.log('[Chronos V6] Spy Mode Ready.');
+    console.log('[Chronos V8] Universal Loaded.');
 }
 
