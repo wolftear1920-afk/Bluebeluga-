@@ -1,0 +1,8 @@
+{
+    "display_name": "Time Window Token Saver",
+    "author": "User",
+    "version": "1.0.0",
+    "icon": "fa-clock",
+    "description": "Strips HTML from Time Windows to save tokens.",
+    "loading_order": 1
+}
