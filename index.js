@@ -1,6 +1,6 @@
-// index.js - Chronos V15 (Gemini Spy Edition) 🟣👁️
+// index.js - Chronos V16 (Force Feedback) 🟣💪
 
-const extensionName = "Chronos_V15_Spy";
+const extensionName = "Chronos_V16_Force";
 
 let stats = {
     enabled: true,
@@ -9,20 +9,15 @@ let stats = {
 };
 
 // =================================================================
-// 1. Logic: Stripper (ตัวล้างโค้ดสำหรับ Gemini)
+// 1. Logic: Stripper (ตัวล้างโค้ด)
 // =================================================================
 const stripHtmlToText = (html) => {
-    // 1. แปลง Tag บรรทัดใหม่ให้ Gemini อ่านง่าย
     let text = html.replace(/<br\s*\/?>/gi, '\n')
                    .replace(/<\/p>/gi, '\n\n')
                    .replace(/<\/div>/gi, '\n')
                    .replace(/<\/h[1-6]>/gi, '\n');
-    
-    // 2. ล้าง HTML Tags และ Encoded Tags ออกให้เกลี้ยง
     text = text.replace(/<[^>]+>/g, ''); 
     text = text.replace(/&lt;[^&]+&gt;/g, ''); 
-    
-    // 3. จัดระเบียบ
     text = text.replace(/\n\s*\n/g, '\n\n').trim();
     return text;
 };
@@ -30,7 +25,7 @@ const stripHtmlToText = (html) => {
 const estimateTokens = (chars) => Math.round(chars / 3.5);
 
 // =================================================================
-// 2. UI: Psycho Neon (30px) + Spy Panel
+// 2. UI: Psycho Neon (30px)
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
@@ -39,52 +34,37 @@ const injectStyles = () => {
             position: fixed; top: 120px; right: 20px;
             width: 30px; height: 30px;
             background: rgba(10, 0, 10, 0.9);
-            border: 2px solid #D500F9;
-            border-radius: 50%;
+            border: 2px solid #D500F9; border-radius: 50%;
             z-index: 999999; cursor: pointer;
             display: flex; align-items: center; justify-content: center;
             font-size: 16px; color: #E040FB;
             box-shadow: 0 0 10px rgba(213, 0, 249, 0.6);
-            transition: all 0.3s;
-            user-select: none;
+            transition: all 0.3s; user-select: none;
             backdrop-filter: blur(4px);
         }
         #chronos-orb:hover { transform: scale(1.15); box-shadow: 0 0 20px #D500F9; border-color: #fff; }
         #chronos-orb.working { background: #D500F9; color: #000; animation: pulse-neon 0.5s infinite; }
         @keyframes pulse-neon { 0% { box-shadow: 0 0 5px #D500F9; } 50% { box-shadow: 0 0 20px #E040FB; } 100% { box-shadow: 0 0 5px #D500F9; } }
 
-        /* Panel เมนู */
         #chronos-panel {
             position: fixed; top: 120px; right: 60px;
             width: 280px; padding: 12px;
             background: #0f0014; border: 1px solid #D500F9;
             color: #E1BEE7; font-family: monospace; font-size: 11px;
             display: none; z-index: 999999;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.9);
-            border-radius: 8px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.9); border-radius: 8px;
         }
-        
-        /* กล่องแสดงผล Spy */
-        .spy-box {
-            background: #000; border: 1px solid #5c007a; 
-            color: #00E676; /* สีเขียว Hacker */
-            padding: 8px; margin-top: 5px; 
-            max-height: 200px; overflow-y: auto;
-            white-space: pre-wrap; font-size: 10px;
-            font-family: 'Consolas', monospace;
-        }
-
-        /* ปุ่มกด */
         .btn-spy {
-            width: 100%; padding: 6px; 
-            background: #330044; color: #E040FB; 
-            border: 1px solid #D500F9; margin-top: 10px; 
-            cursor: pointer; font-weight: bold;
-            transition: background 0.2s;
+            width: 100%; padding: 6px; background: #330044; color: #E040FB; 
+            border: 1px solid #D500F9; margin-top: 10px; cursor: pointer;
         }
-        .btn-spy:hover { background: #550077; color: #fff; }
+        .spy-box {
+            background: #000; border: 1px solid #5c007a; color: #00E676;
+            padding: 8px; margin-top: 5px; max-height: 200px; overflow-y: auto;
+            white-space: pre-wrap; font-size: 10px;
+        }
 
-        /* Popup แจ้งเตือน 2 บรรทัด */
+        /* Popup แบบบังคับโชว์ */
         .token-popup {
             position: fixed;
             background: rgba(18, 0, 24, 0.95);
@@ -125,83 +105,71 @@ const createUI = () => {
 
 const renderPanel = (panel) => {
     panel.innerHTML = `
-        <strong style="color:#E040FB;">CHRONOS V15 (SPY)</strong><br>
+        <strong style="color:#E040FB;">CHRONOS V16</strong><br>
         <div style="margin-top:5px; border-bottom:1px solid #5c007a; padding-bottom:5px;">
             ล่าสุด: <b style="color:#fff;">+${stats.lastSaved}</b> Tok<br>
             รวมทั้งหมด: <b style="color:#00E676;">${stats.totalSaved}</b> Tok
         </div>
-        
-        <button class="btn-spy" onclick="spyLastMessage()">
-            👁️ ส่องสิ่งที่ AI เห็น (Spy)
-        </button>
-        
-        <div style="margin-top:5px; color:#aaa;">ผลลัพธ์ (Clean Text):</div>
-        <div id="spy-area" class="spy-box">กดปุ่มด้านบนเพื่อดู...</div>
+        <button class="btn-spy" onclick="spyLastMessage()">👁️ Spy View</button>
+        <div id="spy-area" class="spy-box">...</div>
     `;
 };
 
-// --- ฟังก์ชัน Spy: ดูข้อความล่าสุดแบบ Real-time ---
 window.spyLastMessage = () => {
     if (typeof SillyTavern === 'undefined') return;
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
-    
-    // หาข้อความบอทล่าสุด
     let lastMsg = "";
     for (let i = chat.length - 1; i >= 0; i--) {
         if (!chat[i].is_user) { lastMsg = chat[i].mes; break; }
     }
-
     const spyArea = document.getElementById('spy-area');
-
-    if (!lastMsg) {
-        spyArea.innerText = "ไม่พบข้อความบอทในประวัติ";
-        spyArea.style.color = "red";
-        return;
-    }
-
-    // เช็คว่ามี HTML ไหม
+    if (!lastMsg) { spyArea.innerText = "No bot message"; return; }
+    
+    // Logic การโชว์ Spy
     if (/<[^>]+>|&lt;[^&]+&gt;/.test(lastMsg)) {
         const cleanText = stripHtmlToText(lastMsg);
-        // แสดงผลลัพธ์
         spyArea.innerText = `[System Content:\n${cleanText}]`;
-        spyArea.style.color = "#00E676"; // สีเขียว = ตัดแล้ว
+        spyArea.style.color = "#00E676";
     } else {
-        spyArea.innerText = "(ข้อความนี้ไม่มี HTML ให้ตัด)";
+        spyArea.innerText = "(Clean Text)";
         spyArea.style.color = "#aaa";
     }
 };
 
-const showFloatingNumber = (amount, total, x, y) => {
+// ฟังก์ชันโชว์เลข (ปรับปรุงให้เรียกง่ายขึ้น)
+const triggerPopup = (amount) => {
+    const orb = document.getElementById('chronos-orb');
+    if (!orb) return;
+    
+    const rect = orb.getBoundingClientRect();
     const el = document.createElement('div');
     el.className = 'token-popup';
     el.innerHTML = `
         <div class="popup-row-latest">⚡ +${amount} Tokens</div>
-        <div class="popup-row-total">📦 รวมสะสม: ${total}</div>
+        <div class="popup-row-total">📦 รวมสะสม: ${stats.totalSaved}</div>
     `;
-    el.style.left = x + 'px';
-    el.style.top = y + 'px';
+    el.style.left = (rect.left - 100) + 'px';
+    el.style.top = (rect.top - 20) + 'px';
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 3000);
 };
 
 // =================================================================
-// 3. Logic: Execution (ทำงานตอนกดส่ง)
+// 3. Logic: Execution (Force Calculate)
 // =================================================================
 const processText = (text) => {
+    // Regex จับทุกอย่างที่เป็น Tag
     const htmlRegex = /<[^>]+>|&lt;[^&]+&gt;/;
     
     if (text && htmlRegex.test(text)) {
         const oldLen = text.length;
         const cleanText = stripHtmlToText(text);
-        
-        // นี่คือรูปแบบที่ส่งให้ Gemini 3.0 Flash
         const newContent = `[System Content:\n${cleanText}]`;
         
-        return {
-            content: newContent,
-            saved: oldLen - newContent.length
-        };
+        // คำนวณส่วนต่างทันที
+        const savedChars = oldLen - newContent.length;
+        return { content: newContent, saved: savedChars };
     }
     return null;
 };
@@ -209,49 +177,52 @@ const processText = (text) => {
 const optimizePayload = (data) => {
     if (!stats.enabled) return data;
 
+    // เปลี่ยนสีลูกแก้วทันทีที่เริ่มทำงาน
     const orb = document.getElementById('chronos-orb');
     if (orb) orb.classList.add('working');
 
-    let charsSaved = 0;
+    let totalCharsSavedThisRound = 0;
 
-    // Chat Completion (Gemini 3.0 Flash ใช้อันนี้)
+    // 1. วนลูปเช็คข้อความ
     if (data.body && data.body.messages && Array.isArray(data.body.messages)) {
         data.body.messages.forEach(msg => {
             const result = processText(msg.content);
             if (result && result.saved > 0) {
+                // แก้ไขข้อมูลที่จะส่งจริง
                 msg.content = result.content;
-                charsSaved += result.saved;
+                // บวกยอดสะสม
+                totalCharsSavedThisRound += result.saved;
             }
         });
-    }
-    // เผื่อไว้สำหรับ Text Completion
-    else if (data.body && data.body.prompt && typeof data.body.prompt === 'string') {
+    } else if (data.body && data.body.prompt && typeof data.body.prompt === 'string') {
         const result = processText(data.body.prompt);
         if (result && result.saved > 0) {
             data.body.prompt = result.content;
-            charsSaved += result.saved;
+            totalCharsSavedThisRound += result.saved;
         }
     }
 
-    if (charsSaved > 0) {
-        const tokens = estimateTokens(charsSaved);
+    // 2. ถ้ามียอดประหยัด -> บังคับโชว์เดี๋ยวนี้!
+    if (totalCharsSavedThisRound > 0) {
+        const tokens = estimateTokens(totalCharsSavedThisRound);
+        
+        // อัปเดต Stats
         stats.lastSaved = tokens;
         stats.totalSaved += tokens;
         
-        if (orb) {
-            const rect = orb.getBoundingClientRect();
-            showFloatingNumber(tokens, stats.totalSaved, rect.left - 100, rect.top - 20);
-        }
-        console.log(`[Chronos] SUCCESS! Saved ${tokens} tokens.`);
+        // เรียก Popup ทันที (ไม่รออะไรทั้งนั้น)
+        triggerPopup(tokens);
+        
+        console.log(`[Chronos] Force Feedback: Saved ${tokens} tokens.`);
+    } else {
+        console.log(`[Chronos] No HTML found to strip.`);
     }
 
+    // คืนค่าลูกแก้ว
     setTimeout(() => {
         if (orb) orb.classList.remove('working');
         const panel = document.getElementById('chronos-panel');
-        if(panel && panel.style.display === 'block') {
-             // อัปเดตตัวเลขใน Panel ถ้าเปิดอยู่
-             renderPanel(panel);
-        }
+        if(panel && panel.style.display === 'block') renderPanel(panel);
     }, 500);
 
     return data;
@@ -266,6 +237,6 @@ setTimeout(createUI, 1500);
 if (typeof SillyTavern !== 'undefined') {
     SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
     SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
-    console.log('[Chronos V15] Spy Mode Ready.');
+    console.log('[Chronos V16] Force Feedback Loaded.');
 }
 
