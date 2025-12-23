@@ -1,6 +1,6 @@
-// index.js - Chronos V16 (Force Feedback) 🟣💪
+// index.js - Chronos V17 (The Truth Seeker) 🕵️‍♂️📜
 
-const extensionName = "Chronos_V16_Force";
+const extensionName = "Chronos_V17_Truth";
 
 let stats = {
     enabled: true,
@@ -9,16 +9,22 @@ let stats = {
 };
 
 // =================================================================
-// 1. Logic: Stripper (ตัวล้างโค้ด)
+// 1. Logic: Stripper
 // =================================================================
 const stripHtmlToText = (html) => {
+    // เก็บความยาวเดิมไว้เทียบ
+    const lenBefore = html.length;
+
     let text = html.replace(/<br\s*\/?>/gi, '\n')
                    .replace(/<\/p>/gi, '\n\n')
                    .replace(/<\/div>/gi, '\n')
                    .replace(/<\/h[1-6]>/gi, '\n');
+    
+    // ลบ Tags ทั้งหมด
     text = text.replace(/<[^>]+>/g, ''); 
     text = text.replace(/&lt;[^&]+&gt;/g, ''); 
     text = text.replace(/\n\s*\n/g, '\n\n').trim();
+    
     return text;
 };
 
@@ -63,8 +69,6 @@ const injectStyles = () => {
             padding: 8px; margin-top: 5px; max-height: 200px; overflow-y: auto;
             white-space: pre-wrap; font-size: 10px;
         }
-
-        /* Popup แบบบังคับโชว์ */
         .token-popup {
             position: fixed;
             background: rgba(18, 0, 24, 0.95);
@@ -105,7 +109,7 @@ const createUI = () => {
 
 const renderPanel = (panel) => {
     panel.innerHTML = `
-        <strong style="color:#E040FB;">CHRONOS V16</strong><br>
+        <strong style="color:#E040FB;">CHRONOS V17</strong><br>
         <div style="margin-top:5px; border-bottom:1px solid #5c007a; padding-bottom:5px;">
             ล่าสุด: <b style="color:#fff;">+${stats.lastSaved}</b> Tok<br>
             รวมทั้งหมด: <b style="color:#00E676;">${stats.totalSaved}</b> Tok
@@ -126,7 +130,6 @@ window.spyLastMessage = () => {
     const spyArea = document.getElementById('spy-area');
     if (!lastMsg) { spyArea.innerText = "No bot message"; return; }
     
-    // Logic การโชว์ Spy
     if (/<[^>]+>|&lt;[^&]+&gt;/.test(lastMsg)) {
         const cleanText = stripHtmlToText(lastMsg);
         spyArea.innerText = `[System Content:\n${cleanText}]`;
@@ -137,39 +140,42 @@ window.spyLastMessage = () => {
     }
 };
 
-// ฟังก์ชันโชว์เลข (ปรับปรุงให้เรียกง่ายขึ้น)
-const triggerPopup = (amount) => {
-    const orb = document.getElementById('chronos-orb');
-    if (!orb) return;
-    
-    const rect = orb.getBoundingClientRect();
+const showFloatingNumber = (amount, total, x, y) => {
     const el = document.createElement('div');
     el.className = 'token-popup';
     el.innerHTML = `
         <div class="popup-row-latest">⚡ +${amount} Tokens</div>
-        <div class="popup-row-total">📦 รวมสะสม: ${stats.totalSaved}</div>
+        <div class="popup-row-total">📦 รวมสะสม: ${total}</div>
     `;
-    el.style.left = (rect.left - 100) + 'px';
-    el.style.top = (rect.top - 20) + 'px';
+    el.style.left = x + 'px';
+    el.style.top = y + 'px';
     document.body.appendChild(el);
     setTimeout(() => el.remove(), 3000);
 };
 
 // =================================================================
-// 3. Logic: Execution (Force Calculate)
+// 3. Logic: Execution with LOGGING
 // =================================================================
-const processText = (text) => {
-    // Regex จับทุกอย่างที่เป็น Tag
+const processText = (text, index) => {
+    const originalLen = text.length;
+    
+    // ลองเช็คซิว่ารับอะไรเข้ามา
+    if (text.includes("<") && text.includes(">")) {
+        console.log(`[Chronos] Msg #${index}: Found HTML! (Len: ${originalLen})`);
+    } else {
+        console.log(`[Chronos] Msg #${index}: No HTML found. (Already Clean?)`);
+    }
+
     const htmlRegex = /<[^>]+>|&lt;[^&]+&gt;/;
     
     if (text && htmlRegex.test(text)) {
-        const oldLen = text.length;
         const cleanText = stripHtmlToText(text);
         const newContent = `[System Content:\n${cleanText}]`;
         
-        // คำนวณส่วนต่างทันที
-        const savedChars = oldLen - newContent.length;
-        return { content: newContent, saved: savedChars };
+        const saved = originalLen - newContent.length;
+        console.log(`[Chronos] Msg #${index}: STRIPPED! Saved ${saved} chars`);
+        
+        return { content: newContent, saved: saved };
     }
     return null;
 };
@@ -177,48 +183,44 @@ const processText = (text) => {
 const optimizePayload = (data) => {
     if (!stats.enabled) return data;
 
-    // เปลี่ยนสีลูกแก้วทันทีที่เริ่มทำงาน
     const orb = document.getElementById('chronos-orb');
     if (orb) orb.classList.add('working');
 
+    console.log("[Chronos] --- SENDING REQUEST ---");
+
     let totalCharsSavedThisRound = 0;
 
-    // 1. วนลูปเช็คข้อความ
     if (data.body && data.body.messages && Array.isArray(data.body.messages)) {
-        data.body.messages.forEach(msg => {
-            const result = processText(msg.content);
+        data.body.messages.forEach((msg, idx) => {
+            const result = processText(msg.content, idx);
             if (result && result.saved > 0) {
-                // แก้ไขข้อมูลที่จะส่งจริง
                 msg.content = result.content;
-                // บวกยอดสะสม
                 totalCharsSavedThisRound += result.saved;
             }
         });
     } else if (data.body && data.body.prompt && typeof data.body.prompt === 'string') {
-        const result = processText(data.body.prompt);
+        const result = processText(data.body.prompt, "prompt");
         if (result && result.saved > 0) {
             data.body.prompt = result.content;
             totalCharsSavedThisRound += result.saved;
         }
     }
 
-    // 2. ถ้ามียอดประหยัด -> บังคับโชว์เดี๋ยวนี้!
+    // สรุปยอด
     if (totalCharsSavedThisRound > 0) {
         const tokens = estimateTokens(totalCharsSavedThisRound);
-        
-        // อัปเดต Stats
         stats.lastSaved = tokens;
         stats.totalSaved += tokens;
         
-        // เรียก Popup ทันที (ไม่รออะไรทั้งนั้น)
-        triggerPopup(tokens);
-        
-        console.log(`[Chronos] Force Feedback: Saved ${tokens} tokens.`);
+        if (orb) {
+            const rect = orb.getBoundingClientRect();
+            showFloatingNumber(tokens, stats.totalSaved, rect.left - 100, rect.top - 20);
+        }
+        console.log(`[Chronos] TOTAL SAVED THIS ROUND: ${tokens} Tokens`);
     } else {
-        console.log(`[Chronos] No HTML found to strip.`);
+        console.log(`[Chronos] TOTAL SAVED: 0 (No modifications made)`);
     }
 
-    // คืนค่าลูกแก้ว
     setTimeout(() => {
         if (orb) orb.classList.remove('working');
         const panel = document.getElementById('chronos-panel');
@@ -237,6 +239,6 @@ setTimeout(createUI, 1500);
 if (typeof SillyTavern !== 'undefined') {
     SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
     SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
-    console.log('[Chronos V16] Force Feedback Loaded.');
+    console.log('[Chronos V17] Truth Seeker Loaded.');
 }
-
+    
