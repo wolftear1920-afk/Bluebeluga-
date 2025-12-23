@@ -3,71 +3,69 @@
 const extensionName = "TimeWindow_VisualSaver";
 
 // =================================================================
-// ส่วนที่ 1: สร้างปุ่มจิ๋ว (Floating Icon) และหน้าต่างแสดงผล
+// ส่วนที่ 1: สร้างปุ่มจิ๋ว (Floating Icon)
 // =================================================================
 let stats = {
     enabled: true,
     lastSavedTokens: 0,
     lastSavedChars: 0,
     totalSavedTokens: 0,
-    lastMessageTimestamp: "ยังไม่มีการส่งข้อความ"
+    lastMessageTimestamp: "-"
 };
 
-// ฟังก์ชันสร้าง UI (ปุ่มลอย)
 const createFloatingUI = () => {
-    // ลบอันเก่าออกก่อนกันซ้ำ
+    // ลบอันเก่าออกก่อน (ถ้ามี)
     const existingIcon = document.getElementById('tw-saver-icon');
     if (existingIcon) existingIcon.remove();
 
     // 1. สร้างปุ่มไอคอน (รูปโล่)
     const iconDiv = document.createElement('div');
     iconDiv.id = 'tw-saver-icon';
-    iconDiv.innerHTML = '🛡️'; // หรือเปลี่ยนเป็น 🍃 ก็ได้
+    iconDiv.innerHTML = '🛡️'; 
     
-    // แต่งสวยๆ (CSS ในตัว)
+    // แต่งสวยๆ + ดันตำแหน่งขึ้นสูงๆ
     Object.assign(iconDiv.style, {
         position: 'fixed',
-        bottom: '80px',       // อยู่ด้านล่าง (สูงกว่าช่องแชทนิดหน่อย)
-        left: '10px',         // ชิดซ้าย
-        width: '40px',
-        height: '40px',
-        backgroundColor: 'rgba(30, 30, 30, 0.7)',
+        bottom: '300px',      // <--- แก้ตรงนี้: ดันขึ้นมาสูง 300px (ประมาณกลางจอครึ่งล่าง)
+        left: '15px',         // ขยับออกจากขอบซ้ายนิดนึง
+        width: '45px',
+        height: '45px',
+        backgroundColor: 'rgba(20, 20, 20, 0.9)', // สีดำเข้ม
+        border: '2px solid white', // <--- เพิ่มขอบสีขาวให้เห็นชัดๆ
         color: '#fff',
         borderRadius: '50%',
         textAlign: 'center',
-        lineHeight: '40px',
-        fontSize: '20px',
+        lineHeight: '41px',   // จัดกึ่งกลางแนวตั้ง
+        fontSize: '24px',
         cursor: 'pointer',
-        zIndex: '9999',
-        boxShadow: '0 2px 5px rgba(0,0,0,0.5)',
-        transition: 'all 0.3s ease',
-        userSelect: 'none'
+        zIndex: '2147483647', // <--- ค่าสูงสุดที่เป็นไปได้ (อยู่บนทุกอย่างแน่นอน)
+        boxShadow: '0 4px 8px rgba(0,0,0,0.8)',
+        transition: 'transform 0.2s ease',
+        userSelect: 'none',
+        display: 'block'      // บังคับแสดงผล
     });
-
-    // เอฟเฟกต์ตอนชี้/กด
-    iconDiv.onmouseover = () => { iconDiv.style.backgroundColor = 'rgba(50, 50, 50, 0.9)'; };
-    iconDiv.onmouseout = () => { iconDiv.style.backgroundColor = 'rgba(30, 30, 30, 0.7)'; };
 
     // 2. สร้างหน้าต่าง Info (ซ่อนอยู่)
     const infoPanel = document.createElement('div');
     infoPanel.id = 'tw-saver-info';
     Object.assign(infoPanel.style, {
         position: 'fixed',
-        bottom: '130px',
-        left: '10px',
+        bottom: '360px',      // <--- ดันหน้าต่าง Info ขึ้นตามปุ่ม
+        left: '15px',
         padding: '15px',
-        backgroundColor: '#263238', // สีเทาอมน้ำเงินเข้ม
+        backgroundColor: '#263238',
         color: '#eceff1',
         borderRadius: '8px',
-        boxShadow: '0 4px 10px rgba(0,0,0,0.5)',
-        zIndex: '9999',
-        display: 'none', // ซ่อนไว้ก่อน
+        border: '1px solid #546E7A',
+        boxShadow: '0 10px 20px rgba(0,0,0,0.5)',
+        zIndex: '2147483647',
+        display: 'none',
         fontSize: '14px',
-        maxWidth: '250px',
+        width: '220px',
         fontFamily: 'sans-serif'
     });
 
-    // 3. ใส่ฟังก์ชันกดปุ่ม -> โชว์/ซ่อน รายละเอียด
+    // ใส่ฟังก์ชันกดปุ่ม
     iconDiv.onclick = () => {
         if (infoPanel.style.display === 'none') {
             updateInfoContent(infoPanel);
@@ -76,40 +74,43 @@ const createFloatingUI = () => {
             infoPanel.style.display = 'none';
         }
     };
+    
+    // เอฟเฟกต์กดแล้วเด้งดึ๋ง
+    iconDiv.onmousedown = () => iconDiv.style.transform = 'scale(0.9)';
+    iconDiv.onmouseup = () => iconDiv.style.transform = 'scale(1)';
 
+    // ยัดใส่หน้าเว็บ
     document.body.appendChild(iconDiv);
     document.body.appendChild(infoPanel);
+    console.log('[Visual Saver] Icon created at bottom: 300px');
 };
 
-// ฟังก์ชันอัปเดตข้อความในหน้าต่าง Info
 const updateInfoContent = (panel) => {
     panel.innerHTML = `
-        <div style="border-bottom: 1px solid #546E7A; padding-bottom: 5px; margin-bottom: 5px; font-weight: bold;">
-            📊 Time Window Saver
+        <div style="border-bottom: 1px solid #78909C; padding-bottom: 5px; margin-bottom: 8px; font-weight: bold; color: #80CBC4;">
+            🛡️ Token Saver Stats
         </div>
-        <div style="font-size: 13px;">
-            <b>ล่าสุด (${stats.lastMessageTimestamp}):</b><br>
-            <span style="color: #69F0AE;">ประหยัด: ~${stats.lastSavedTokens} Tokens</span><br>
-            <span style="color: #B0BEC5;">(ตัดออก ${stats.lastSavedChars} ตัวอักษร)</span>
-            <br><hr style="border: 0; border-top: 1px dashed #546E7A; margin: 5px 0;">
-            <b>ยอดรวมทั้งหมด:</b><br>
-            ประหยัดไปแล้ว: <b>${stats.totalSavedTokens}</b> Tokens
+        <div style="font-size: 13px; line-height: 1.5;">
+            <b>⏳ เมื่อ:</b> ${stats.lastMessageTimestamp}<br>
+            <b>✂️ ตัดออก:</b> ${stats.lastSavedChars} ตัวอักษร<br>
+            <b>💰 ประหยัด:</b> <span style="color: #69F0AE; font-size: 1.1em; font-weight: bold;">~${stats.lastSavedTokens}</span> Tokens
+            <hr style="border: 0; border-top: 1px dashed #546E7A; margin: 8px 0;">
+            <b>📦 ยอดรวม:</b> ${stats.totalSavedTokens} Tokens
         </div>
-        <div style="margin-top: 8px; font-size: 10px; color: #90A4AE; text-align: right;">
-            แตะที่ไอคอนเพื่อปิด
+        <div style="margin-top: 5px; font-size: 10px; color: #B0BEC5; text-align: right;">
+            กดที่โล่เพื่อปิด
         </div>
     `;
 };
 
 // =================================================================
-// ส่วนที่ 2: Logic การตัดคำ (เหมือนเดิม แต่เพิ่มการเก็บค่า)
+// ส่วนที่ 2: Logic การตัดคำ
 // =================================================================
 const estimateTokens = (chars) => Math.round(chars / 3.5);
 
 const optimizePrompt = (data) => {
     if (!stats.enabled) return data;
 
-    // Regex ตัวเดิม
     const regex = /<details>[\s\S]*?<summary>(.*?)<\/summary>[\s\S]*?TIME:<\/b>\s*(.*?)<br>[\s\S]*?WEATHER:<\/b>\s*(.*?)<br>[\s\S]*?LOCATION:<\/b>\s*(.*?)<br>[\s\S]*?NOW PLAYING:<\/b>\s*(.*?)[\s\S]*?<\/details>/gi;
 
     let totalSavingsInThisMessage = 0;
@@ -125,7 +126,7 @@ const optimizePrompt = (data) => {
 
     let modified = false;
 
-    // เช็ค Chat Completion
+    // Chat Completion
     if (data.body && data.body.messages) {
         data.body.messages.forEach(msg => {
             if (msg.content && msg.content.includes('<details>')) {
@@ -134,7 +135,7 @@ const optimizePrompt = (data) => {
             }
         });
     } 
-    // เช็ค Text Completion
+    // Text Completion
     else if (data.body && data.body.prompt && typeof data.body.prompt === 'string') {
         if (data.body.prompt.includes('<details>')) {
             data.body.prompt = data.body.prompt.replace(regex, replacer);
@@ -142,50 +143,47 @@ const optimizePrompt = (data) => {
         }
     }
 
-    // ถ้ามีการตัดคำเกิดขึ้น ให้บันทึกสถิติ
     if (modified && totalSavingsInThisMessage > 0) {
         const savedTokens = estimateTokens(totalSavingsInThisMessage);
         
-        // อัปเดตตัวแปร Global
         stats.lastSavedChars = totalSavingsInThisMessage;
         stats.lastSavedTokens = savedTokens;
         stats.totalSavedTokens += savedTokens;
         
-        // เก็บเวลาปัจจุบัน (ชั่วโมง:นาที)
         const now = new Date();
         stats.lastMessageTimestamp = `${now.getHours()}:${now.getMinutes().toString().padStart(2, '0')}`;
 
-        // เอฟเฟกต์กระพริบที่ไอคอน เพื่อบอกว่า "ทำงานแล้วนะ"
+        // ทำให้ปุ่มกระพริบสีเขียว
         const icon = document.getElementById('tw-saver-icon');
         if (icon) {
-            icon.style.backgroundColor = '#69F0AE'; // สีเขียวสว่าง
+            icon.style.backgroundColor = '#00E676'; // เขียวสด
+            icon.style.borderColor = '#00E676';
             setTimeout(() => {
-                icon.style.backgroundColor = 'rgba(30, 30, 30, 0.7)'; // กลับเป็นสีเดิม
-            }, 500);
+                icon.style.backgroundColor = 'rgba(20, 20, 20, 0.9)'; // กลับเป็นสีเดิม
+                icon.style.borderColor = 'white';
+            }, 800);
         }
-        
-        console.log(`[Saver] Saved ${savedTokens} tokens in this message.`);
     } else {
-        // ถ้าข้อความนี้ไม่มี Time Window ให้เคลียร์ค่าล่าสุดเป็น 0
         stats.lastSavedChars = 0;
         stats.lastSavedTokens = 0;
-        stats.lastMessageTimestamp = "ข้อความล่าสุดไม่มี TimeWindow";
+        stats.lastMessageTimestamp = "ล่าสุดไม่มีข้อมูล";
     }
 
     return data;
 };
 
 // =================================================================
-// ส่วนที่ 3: เริ่มทำงาน
+// ส่วนที่ 3: เริ่มทำงาน (เพิ่มความชัวร์ในการโหลด)
 // =================================================================
 
-// สร้างปุ่มทันทีที่โหลดเสร็จ
-// หน่วงเวลาเล็กน้อยเพื่อให้หน้าจอโหลดครบก่อน
-setTimeout(createFloatingUI, 2000);
+// ลองสร้างปุ่มหลายรอบหน่อย เผื่อหน้าเว็บโหลดช้า
+setTimeout(createFloatingUI, 1000); // 1 วินาที
+setTimeout(createFloatingUI, 3000); // 3 วินาที (กันเหนียว)
+setTimeout(createFloatingUI, 5000); // 5 วินาที (กันเหนียวสุดๆ)
 
 if (typeof SillyTavern !== 'undefined') {
     SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePrompt);
     SillyTavern.extension_manager.register_hook('text_completion_request', optimizePrompt);
-    console.log('[Visual Saver] Loaded.');
-        }
-    
+    console.log('[Visual Saver] Loaded with HIGH Position.');
+}
+
