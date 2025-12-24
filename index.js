@@ -1,9 +1,10 @@
-// index.js - Chronos V62 (Total Recall) 🌌🧠
-// Logic: Load = Total System Tokens (Optimized)
-// UI: Src Label now shows "Chat Only" count
+// index.js - Chronos V65 (Clean Focus) 🧹🎯
+// Logic: Load = Total Raw (Uncut)
+//        Chat = Chat History (Stripped/Clean only)
+//        Saved = REMOVED (As requested)
 // Feature: Manual Input + V47 Neon Style
 
-const extensionName = "Chronos_V62_TotalRecall";
+const extensionName = "Chronos_V65_CleanFocus";
 
 // =================================================================
 // 1. GLOBAL STATE
@@ -54,33 +55,37 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 3. CALCULATOR (Updated for Chat Separation)
+// 3. CALCULATOR (Total Raw vs Chat Clean)
 // =================================================================
 const calculateStats = () => {
-    if (typeof SillyTavern === 'undefined') return { memoryRange: "Syncing...", original: 0, optimized: 0, saved: 0, max: 0, chatOnly: 0 };
+    if (typeof SillyTavern === 'undefined') return { memoryRange: "Syncing...", displayLoad: 0, max: 0, chatClean: 0 };
     
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
     const tokenizer = getChronosTokenizer();
     const quickCount = (text) => (tokenizer && typeof tokenizer.encode === 'function') ? tokenizer.encode(text).length : Math.round(text.length / 3);
 
-    // --- A. ANALYZE CHAT & SAVINGS ---
-    let totalSavings = 0;
-    let chatRawTokens = 0; // [NEW] นับเฉพาะแชท
+    // --- A. ANALYZE CHAT (CLEAN ONLY) ---
+    let chatCleanTokens = 0; 
 
     chat.forEach((msg) => {
         const rawMsg = msg.mes || "";
-        const rawLen = quickCount(rawMsg);
-        chatRawTokens += rawLen; // สะสมยอดแชทดิบ
+        let tokens = 0;
 
         if (/<[^>]+>|&lt;[^&]+&gt;/.test(rawMsg)) {
+            // ถ้ามี HTML ให้ตัดออกแล้วค่อยนับ
             const cleanMsg = `[System Content:\n${stripHtmlToText(rawMsg)}]`;
-            const optLen = quickCount(cleanMsg);
-            totalSavings += Math.max(0, rawLen - optLen);
+            tokens = quickCount(cleanMsg);
+        } else {
+            // ถ้าไม่มีก็นับเลย
+            tokens = quickCount(rawMsg);
         }
+        
+        chatCleanTokens += tokens;
     });
 
-    // --- B. TOTAL SYSTEM LOAD (From ST) ---
+    // --- B. TOTAL SYSTEM LOAD (RAW from ST) ---
+    // ยอดรวมทุกอย่าง (Description + World Info + Chat Raw)
     let stTotalTokens = context.tokens || 0;
     
     // Fallback: Read DOM
@@ -95,14 +100,13 @@ const calculateStats = () => {
             }
         }
     }
-    // Fallback Manual
+    // Fallback Manual (Last resort)
     if (stTotalTokens === 0 && chat.length > 0) {
-         stTotalTokens = chatRawTokens + 2000; // Est overhead
+         stTotalTokens = chatCleanTokens + 2000; 
     }
 
     // --- C. MAX CONTEXT ---
     let maxTokens = 8192;
-
     if (userManualLimit > 0) {
         maxTokens = userManualLimit;
     } else {
@@ -114,24 +118,23 @@ const calculateStats = () => {
             if (SillyTavern.settings?.context_size) maxTokens = parseInt(SillyTavern.settings.context_size);
             else if (context.max_context) maxTokens = parseInt(context.max_context);
         }
+        // Force Expand
         if (stTotalTokens > maxTokens) maxTokens = stTotalTokens;
     }
 
-    // Load จริง (รวมทุกอย่าง - ที่ประหยัดได้)
-    const finalOptimizedLoad = Math.max(0, stTotalTokens - totalSavings);
+    // Load = Raw Total
+    const displayLoad = stTotalTokens; 
 
     let memoryRangeText = "Healthy";
-    const percent = maxTokens > 0 ? (finalOptimizedLoad / maxTokens) : 0;
+    const percent = maxTokens > 0 ? (displayLoad / maxTokens) : 0;
     if (percent > 1) memoryRangeText = "Overflow";
     else if (percent > 0.9) memoryRangeText = "Critical";
 
     return {
         memoryRange: memoryRangeText,
-        original: stTotalTokens,
-        optimized: finalOptimizedLoad,
-        saved: totalSavings,
+        displayLoad: displayLoad, // ยอดดิบรวม
         max: maxTokens,
-        chatOnly: chatRawTokens // ส่งค่าเฉพาะแชทออกไป
+        chatClean: chatCleanTokens // ยอดแชทคลีน
     };
 };
 
@@ -153,7 +156,7 @@ const renderInspector = () => {
     const chat = SillyTavern.getContext().chat || [];
     const stats = calculateStats();
     
-    const percent = stats.max > 0 ? Math.min((stats.optimized / stats.max) * 100, 100) : 0;
+    const percent = stats.max > 0 ? Math.min((stats.displayLoad / stats.max) * 100, 100) : 0;
     
     let listHtml = chat.slice(-5).reverse().map((msg, i) => {
         const actualIdx = chat.length - 1 - i;
@@ -168,9 +171,10 @@ const renderInspector = () => {
     const inputValue = userManualLimit > 0 ? userManualLimit : '';
     const placeholder = fmt(stats.max);
 
+    // Removed "Saved" Row as requested
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V62 (Recall)</span>
+            <span>🚀 CHRONOS V65 (Clean Focus)</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -185,15 +189,10 @@ const renderInspector = () => {
                 <span class="dash-val" style="color:#E040FB;">${stats.memoryRange}</span>
             </div>
             
-            <div class="dash-row">
-                <span style="color:#aaa;">🛡️ Tokens Saved</span>
-                <span class="dash-val" style="color:#00E676;">-${fmt(stats.saved)} toks</span>
-            </div>
-
-            <div class="dash-row" style="align-items:center;">
-                <span style="color:#fff;">🔋 Load (Total)</span>
+            <div class="dash-row" style="align-items:center; margin-top:5px;">
+                <span style="color:#fff;">🔋 Load (Total Raw)</span>
                 <div style="display:flex; align-items:center; gap:5px;">
-                    <span class="dash-val" style="color:#fff;">${fmt(stats.optimized)} / </span>
+                    <span class="dash-val" style="color:#fff;">${fmt(stats.displayLoad)} / </span>
                     <input type="number" 
                            value="${inputValue}" 
                            placeholder="${placeholder}"
@@ -206,8 +205,8 @@ const renderInspector = () => {
                 <div class="progress-bar" style="width: ${percent}%"></div>
             </div>
             
-            <div style="text-align:right; font-size:9px; color:#555; margin-top:3px;">
-                Chat: ${fmt(stats.chatOnly)}
+            <div style="text-align:right; font-size:9px; color:#00E676; margin-top:3px;">
+                Chat (Clean): ${fmt(stats.chatClean)}
             </div>
         </div>
 
@@ -230,12 +229,11 @@ const renderInspector = () => {
 };
 
 // =================================================================
-// 5. STYLES (Fixed Z-Index & Positioning)
+// 5. STYLES (Strict V47 Neon)
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
     style.innerHTML = `
-        /* ORB */
         #chronos-orb {
             position: fixed; top: 150px; right: 20px; width: 40px; height: 40px;
             background: radial-gradient(circle, rgba(20,0,30,0.9) 0%, rgba(0,0,0,1) 100%);
@@ -250,7 +248,6 @@ const injectStyles = () => {
         #chronos-orb:hover { transform: scale(1.1); border-color: #00E676; color: #00E676; box-shadow: 0 0 25px #00E676; }
         @keyframes spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        /* INSPECTOR */
         #chronos-inspector {
             position: fixed; top: 80px; right: 70px; width: 320px; 
             background: rgba(10, 10, 12, 0.95); 
@@ -410,7 +407,7 @@ const createUI = () => {
     setTimeout(createUI, 2000); 
 
     if (typeof SillyTavern !== 'undefined') {
-        console.log(`[${extensionName}] Ready. Total Recall Mode.`);
+        console.log(`[${extensionName}] Ready. Clean Focus Mode.`);
         
         SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
