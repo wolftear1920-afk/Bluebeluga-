@@ -1,14 +1,14 @@
-// index.js - Chronos V43 (The Absolutist) 🌪️🟣
-// Logic: Strict 'generate_prompt' Hook -> Global Variable -> UI
-// UI: Original Neon Cyclone (V39 Style) - Unchanged Layout
+// index.js - Chronos V44 (The Fail-Safe Edition) 🛡️🌪️
+// Logic: Waterfall Strategy (GeneratePrompt > RequestPayload > Cache)
+// UI: Original Neon Cyclone (V39 Style)
 
-const extensionName = "Chronos_V43_Absolutist";
+const extensionName = "Chronos_V44_FailSafe";
 
 // =================================================================
-// 1. GLOBAL STATE (The Single Source of Truth)
+// 1. GLOBAL STATE (Dual Source of Truth)
 // =================================================================
-// ตามคำสั่ง: เก็บค่าเป็น GLOBAL เดียว ห้ามคำนวณซ้อน
-let FINAL_PROMPT_TOKENS = 0;
+let FINAL_PROMPT_TOKENS = 0;   // ค่าจาก generate_prompt (แม่นยำสุด แต่มาบ้างไม่มาบ้าง)
+let LAST_PAYLOAD_TOKENS = 0;   // [PATCH 1] ค่าจาก request payload (แม่นยำรองลงมา แต่มาตลอด)
 
 // Helper: ดึง Tokenizer ของ Model ปัจจุบัน
 const getChronosTokenizer = () => {
@@ -23,29 +23,22 @@ const getChronosTokenizer = () => {
 };
 
 // =================================================================
-// 2. THE CRITICAL HOOK (generate_prompt)
+// 2. THE AUTHORITY HOOK (generate_prompt)
 // =================================================================
-// ตามคำสั่ง: Hook ตรงนี้เท่านั้น และนับจาก data.prompt
 const chronosAfterPrompt = (data) => {
     try {
         const tokenizer = getChronosTokenizer();
         if (tokenizer && data && typeof data.prompt === 'string') {
-            // นับ Token จาก String จริงที่จะส่ง API
             FINAL_PROMPT_TOKENS = tokenizer.encode(data.prompt).length;
-            
-            console.log(`[Chronos] FINAL_PROMPT_TOKENS Updated: ${FINAL_PROMPT_TOKENS}`);
+            console.log(`[Chronos] FINAL_PROMPT Updated: ${FINAL_PROMPT_TOKENS}`);
         }
-    } catch (e) {
-        console.warn('[Chronos] Token counting failed:', e);
-    }
-    // ห้ามแก้ data ตรงนี้ ส่งคืนทันที
+    } catch (e) {}
     return data;
 };
 
 // =================================================================
-// 3. PAYLOAD MODIFIER (chat_completion_request)
+// 3. THE FAIL-SAFE HOOK (chat_completion_request)
 // =================================================================
-// ส่วนนี้มีไว้เพื่อ "ตัด HTML" เท่านั้น (Logic เดิมที่ทำงานได้ดี)
 const stripHtmlToText = (html) => {
     if (!html) return "";
     let text = html.replace(/<br\s*\/?>/gi, '\n')
@@ -66,6 +59,7 @@ const optimizePayload = (data) => {
         return text;
     };
 
+    // 1. ทำการตัด HTML (Logic เดิม)
     if (data.body?.messages) {
         data.body.messages.forEach(msg => {
             msg.content = processText(msg.content);
@@ -73,8 +67,23 @@ const optimizePayload = (data) => {
     } else if (data.body?.prompt) {
         data.body.prompt = processText(data.body.prompt);
     }
-    
-    // Refresh UI หลังส่งเสร็จ (เพื่อให้ UI มาอ่านค่า GLOBAL ใหม่)
+
+    // 2. [PATCH 2] นับ Token ทันทีหลังตัดเสร็จ (Fail-Safe Logic)
+    // ตรงนี้รับประกันว่าทำงานทุกครั้งที่มีการส่ง API
+    try {
+        const tokenizer = getChronosTokenizer();
+        if (tokenizer) {
+            if (data.body?.messages) {
+                // รวมข้อความแบบคร่าวๆ เพื่อหาค่า Load (Fallback)
+                const joined = data.body.messages.map(m => m.content).join('\n');
+                LAST_PAYLOAD_TOKENS = tokenizer.encode(joined).length;
+            } else if (typeof data.body?.prompt === 'string') {
+                LAST_PAYLOAD_TOKENS = tokenizer.encode(data.body.prompt).length;
+            }
+        }
+    } catch (e) {}
+
+    // 3. Refresh UI
     setTimeout(() => {
         const ins = document.getElementById('chronos-inspector');
         if (ins && ins.style.display === 'block') renderInspector();
@@ -84,7 +93,7 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 4. STATS CALCULATOR (Read Only Global)
+// 4. STATS CALCULATOR (The Waterfall Logic)
 // =================================================================
 const calculateStats = () => {
     if (typeof SillyTavern === 'undefined') return { memoryRange: "Syncing...", original: 0, optimized: 0, remaining: 0, saved: 0, max: 0 };
@@ -92,7 +101,7 @@ const calculateStats = () => {
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
 
-    // --- 1. Max Context Logic (คงเดิมเพราะแม่นยำ) ---
+    // --- 1. Max Context ---
     let maxTokens = 8192;
     const candidateValues = [];
     ['max_context', 'max_tokens', 'cfg_ctx_size'].forEach(id => {
@@ -104,13 +113,18 @@ const calculateStats = () => {
     const validValues = candidateValues.filter(v => typeof v === 'number' && v > 100);
     if (validValues.length > 0) maxTokens = Math.max(...validValues);
 
-    // --- 2. Load Logic (Strict Global Usage) ---
-    // ตามคำสั่ง: UI ใช้ค่าจาก GLOBAL นี้อย่างเดียว
-    // กรณีเพิ่งโหลดหน้าเว็บและยังไม่ได้ส่งข้อความ (Global=0) ให้ใช้ค่า Cache ของ ST ไปพลางๆ
-    let currentLoad = FINAL_PROMPT_TOKENS > 0 ? FINAL_PROMPT_TOKENS : (context.tokens || 0);
+    // --- 2. Load Logic [PATCH 3] (Waterfall Strategy) ---
+    // ถ้า generate_prompt ทำงาน -> ใช้ FINAL (แม่น 100%)
+    // ถ้าไม่ทำ (เป็น 0) -> ใช้ LAST_PAYLOAD (แม่น 95% แต่มีของแน่)
+    // ถ้าไม่มีเลย -> ใช้ Cache ของระบบ (Fallback สุดท้าย)
+    let currentLoad = 
+        FINAL_PROMPT_TOKENS > 0 
+            ? FINAL_PROMPT_TOKENS 
+            : LAST_PAYLOAD_TOKENS > 0 
+                ? LAST_PAYLOAD_TOKENS 
+                : (context.tokens || 0);
 
-    // --- 3. Saved Estimate (Visualization Only) ---
-    // ส่วนนี้แยกออกมาเพื่อโชว์ว่า "ตัดไปเท่าไหร่" (Estimate) ไม่มีผลต่อ Logic การส่ง
+    // --- 3. Saved Estimate ---
     let estimatedSavings = 0;
     const tokenizer = getChronosTokenizer();
     const quickCount = (text) => (tokenizer && typeof tokenizer.encode === 'function') ? tokenizer.encode(text).length : Math.round(text.length / 2.7);
@@ -127,18 +141,14 @@ const calculateStats = () => {
     });
 
     // --- 4. Final Display Values ---
-    // Optimized = ค่าจริงจาก Global
-    // Original = ค่าจริง + ค่าที่ตัดออก (ย้อนกลับเพื่อโชว์)
     const optimizedLoad = currentLoad;
     const originalLoad = currentLoad + estimatedSavings; 
     const remainingSpace = Math.max(0, maxTokens - optimizedLoad);
 
-    // --- 5. Memory Range (Visual Guide) ---
+    // --- 5. Memory Range Logic ---
     let memoryRangeText = "-";
-    // Logic เดิมเพื่อหาว่าข้อความไหนอยู่ใน Context
     const systemOverhead = Math.max(0, originalLoad - quickCount(chat.map(m=>m.mes).join('')));
     const availableForChat = maxTokens - systemOverhead;
-    
     let currentFill = 0;
     let startMsgIndex = -1;
     let rememberedCount = 0;
@@ -149,7 +159,6 @@ const calculateStats = () => {
             const clean = stripHtmlToText(chat[i].mes);
             msgToken = quickCount(`[System Content:\n${clean}]`);
         }
-
         if (currentFill + msgToken <= availableForChat) {
             currentFill += msgToken;
             startMsgIndex = i;
@@ -165,23 +174,29 @@ const calculateStats = () => {
         else memoryRangeText = "None (Context Full)";
     }
 
+    // Determine Source Label
+    let sourceLabel = "ST Cache (Idle)";
+    if (FINAL_PROMPT_TOKENS > 0) sourceLabel = "Generate Prompt (Exact)";
+    else if (LAST_PAYLOAD_TOKENS > 0) sourceLabel = "Payload Request (Fail-Safe)";
+
     return {
         memoryRange: memoryRangeText,
         original: originalLoad,
-        optimized: optimizedLoad, // นี่คือค่าจาก FINAL_PROMPT_TOKENS
+        optimized: optimizedLoad,
         remaining: remainingSpace,
         saved: estimatedSavings,
-        max: maxTokens
+        max: maxTokens,
+        source: sourceLabel
     };
 };
 
 // =================================================================
-// 5. UI SYSTEM (Styles Unchanged)
+// 5. UI SYSTEM (V39 STYLE)
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
     style.innerHTML = `
-        /* ORB STYLES - CYCLONE SPIN */
+        /* ORB STYLES */
         #chronos-orb {
             position: fixed; top: 150px; right: 20px; width: 40px; height: 40px;
             background: radial-gradient(circle, rgba(20,0,30,0.9) 0%, rgba(0,0,0,1) 100%);
@@ -275,7 +290,7 @@ const renderInspector = () => {
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V43 (Absolutist)</span>
+            <span>🚀 CHRONOS V44 (Fail-Safe)</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -305,7 +320,7 @@ const renderInspector = () => {
             </div>
             
             <div style="text-align:right; font-size:9px; color:#555; margin-top:3px;">
-                Source: ${FINAL_PROMPT_TOKENS > 0 ? 'GENERATE_PROMPT (Exact)' : 'ST Cache (Waiting...)'}
+                Source: ${stats.source}
             </div>
         </div>
 
@@ -389,7 +404,6 @@ window.viewAIVersion = (index) => {
     const contentDiv = document.getElementById('view-target-content');
     if (!contentDiv) return;
 
-    // Helper for Inspection (Visual Only)
     const tokenizer = getChronosTokenizer();
     const quickCount = (text) => (tokenizer && typeof tokenizer.encode === 'function') ? tokenizer.encode(text).length : Math.round(text.length / 2.7);
 
@@ -425,16 +439,15 @@ window.viewAIVersion = (index) => {
     setTimeout(createUI, 2000); 
 
     if (typeof SillyTavern !== 'undefined') {
-        console.log(`[${extensionName}] Ready. Strict Lifecycle Hooks.`);
+        console.log(`[${extensionName}] Ready. Hooks registered.`);
         
-        // HOOK 1: Authoritative Token Counting (Generate Prompt)
+        // HOOK 1: Authority (Generate Prompt)
         SillyTavern.extension_manager.register_hook('generate_prompt', chronosAfterPrompt);
         
-        // HOOK 2: Modification (HTML Stripping)
+        // HOOK 2: Fail-Safe & Modifier (Payload Request)
         SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
     } else {
         console.warn(`[${extensionName}] SillyTavern object not found.`);
     }
 })();
-        
