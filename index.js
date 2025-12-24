@@ -1,9 +1,8 @@
+// index.js - Chronos V55 (Direct Memory) 🧠⚡
+// Logic: Bypasses HTML inputs entirely. Reads 'SillyTavern.settings.context_size' directly.
+// Fixes: 8192 stuck issue caused by hidden input fields.
 
-// index.js - Chronos V54 (True Mirror) 🪞✨
-// Logic: Mirrors the EXACT value from the "Context Size" slider input
-// Fixes: 8192 stuck issue by reading the DOM input directly
-
-const extensionName = "Chronos_V54_TrueMirror";
+const extensionName = "Chronos_V55_DirectMemory";
 
 // =================================================================
 // 1. HELPERS
@@ -51,7 +50,7 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 3. TRUE MIRROR CALCULATOR (THE FIX)
+// 3. DIRECT MEMORY CALCULATOR (THE FINAL FIX)
 // =================================================================
 const calculateStats = () => {
     if (typeof SillyTavern === 'undefined') return { memoryRange: "Loading...", original: 0, optimized: 0, saved: 0, max: 0 };
@@ -75,7 +74,6 @@ const calculateStats = () => {
 
     // --- B. BASE LOAD (DOM SYNC) ---
     let stTotalTokens = context.tokens || 0;
-    // พยายามดึงจาก Token Counter บาร์บนสุดก่อน
     const tokenCounterEl = document.getElementById('token_counter') || document.querySelector('.token-counter');
     if (tokenCounterEl) {
         const text = tokenCounterEl.innerText || "";
@@ -85,39 +83,41 @@ const calculateStats = () => {
             if (!isNaN(domCurrent) && domCurrent > 0) stTotalTokens = domCurrent;
         }
     }
-    // Fallback
     if (stTotalTokens === 0 && chat.length > 0) {
          let manualChat = 0;
          chat.forEach(m => manualChat += quickCount(m.mes));
          stTotalTokens = manualChat + 2000;
     }
 
-    // --- C. TRUE MIRROR LOGIC (READ SLIDER DIRECTLY) ---
-    let maxTokens = 8192; // Default fallback
+    // --- C. TRUE MAX (DIRECT MEMORY ACCESS) ---
+    // เจาะเอาจาก Variable ของระบบโดยตรง ไม่สน HTML
+    let maxTokens = 8192; 
 
-    // 1. Priority: Read directly from the HTML Input Element
-    // นี่คือจุดสำคัญ: อ่านค่าจากกล่องตัวเลขที่คุณพิมพ์หรือเลื่อน Slider ไว้
-    const maxCtxInput = document.getElementById('max_context');
-    if (maxCtxInput) {
-        const val = parseInt(maxCtxInput.value);
-        if (!isNaN(val) && val > 0) {
-            maxTokens = val;
-        }
-    } else {
-        // 2. Secondary: Internal Settings variable
-        if (SillyTavern.settings && SillyTavern.settings.context_size) {
-            maxTokens = parseInt(SillyTavern.settings.context_size);
+    if (SillyTavern.settings) {
+        // เช็คว่า Unlock อยู่ไหม
+        const unlocked = SillyTavern.settings.unlock_context || SillyTavern.settings.unlocked_context;
+        
+        if (unlocked) {
+            // ถ้า Unlock ให้ใช้ context_size (ค่า Slider จริง)
+            if (SillyTavern.settings.context_size) {
+                maxTokens = parseInt(SillyTavern.settings.context_size);
+            }
+        } else {
+            // ถ้าไม่ Unlock ให้ใช้ max_context (ค่าจำกัด)
+            if (SillyTavern.settings.max_context) {
+                maxTokens = parseInt(SillyTavern.settings.max_context);
+            }
         }
     }
 
-    // 3. Final Sanity Check: If Unlock is checked but value is low, trust context_size
-    if (SillyTavern.settings?.unlock_context && maxTokens <= 8192) {
-         if (SillyTavern.settings.context_size) maxTokens = parseInt(SillyTavern.settings.context_size);
-    }
+    // Failsafe: ถ้าหาไม่เจอ ให้ลองดึงจาก Context object
+    if (maxTokens <= 0 && context.max_context) maxTokens = context.max_context;
 
+    // Ultimate Failsafe: ถ้าโหลดยังมากกว่า Max ให้ถีบ Max ขึ้น (กันหลอดแตก)
     const finalOptimizedLoad = Math.max(0, stTotalTokens - totalSavings);
+    if (finalOptimizedLoad > maxTokens) maxTokens = finalOptimizedLoad;
 
-    // Memory Range Label
+    // --- Memory Range Label ---
     let memoryRangeText = "Healthy";
     const percent = maxTokens > 0 ? (finalOptimizedLoad / maxTokens) : 0;
     
@@ -130,7 +130,7 @@ const calculateStats = () => {
         original: stTotalTokens,
         optimized: finalOptimizedLoad,
         saved: totalSavings,
-        max: maxTokens // ค่านี้จะตรงกับ Slider เป๊ะๆ
+        max: maxTokens
     };
 };
 
@@ -153,6 +153,9 @@ const renderInspector = () => {
         if (percent > 100) percent = 100;
     }
 
+    // Format numbers (e.g. 100,000)
+    const fmt = (n) => n.toLocaleString();
+
     let listHtml = chat.slice(-5).reverse().map((msg, i) => {
         const actualIdx = chat.length - 1 - i;
         const preview = (msg.mes || "").substring(0, 30).replace(/</g, '&lt;');
@@ -162,12 +165,9 @@ const renderInspector = () => {
                 </div>`;
     }).join('');
 
-    // Format numbers nicely (e.g. 100,000)
-    const fmt = (n) => n.toLocaleString();
-
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V54 (Mirror)</span>
+            <span>🚀 CHRONOS V55 (Direct)</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -260,43 +260,4 @@ const makeDraggable = (elm, type) => {
     };
     elm.onmousedown = dragStart; elm.ontouchstart = dragStart;
 };
-
-window.viewAIVersion = (index) => {
-    const chat = SillyTavern.getContext().chat || [];
-    const msg = chat[index];
-    if (!msg) return;
-    const wrapper = document.getElementById('view-target-wrapper');
-    const content = document.getElementById('view-target-content');
-    wrapper.style.display = 'block';
-    let text = msg.mes;
-    if (/<[^>]+>|&lt;[^&]+&gt;/.test(text)) text = `[System Content:\n${stripHtmlToText(text)}]`;
-    content.innerHTML = `<div class="view-area">${text.replace(/</g, '&lt;')}</div>`;
-};
-
-const createUI = () => {
-    const orb = document.createElement('div'); orb.id = 'chronos-orb'; orb.innerHTML = '🌀';
-    const ins = document.createElement('div'); ins.id = 'chronos-inspector';
-    document.body.append(orb, ins);
-    orb.onclick = () => {
-        if (orb.getAttribute('data-dragging') === 'true') return;
-        ins.style.display = ins.style.display === 'none' ? 'block' : 'none';
-        if (ins.style.display === 'block') renderInspector();
-    };
-    makeDraggable(orb, 'orb'); makeDraggable(ins, 'panel');
-};
-
-(function() {
-    injectStyles();
-    setTimeout(createUI, 1500); 
-    if (typeof SillyTavern !== 'undefined') {
-        console.log(`[${extensionName}] Ready.`);
-        SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
-        SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
-        setInterval(() => {
-            if (document.getElementById('chronos-inspector')?.style.display === 'block') {
-                renderInspector();
-            }
-        }, 2000);
-    }
-})();
-        
+    
