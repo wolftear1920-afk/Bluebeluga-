@@ -1,65 +1,48 @@
-// index.js - Chronos V41 (Hybrid Edition) 🟣🟢
-// UI: Original Neon Cyberpunk
-// Logic: Real Payload Counting (Thanks to ChatGPT Senior)
+// index.js - Chronos V42 (Final Prompt Authority) 🌪️👑
+// Logic: Generate Prompt Hook (Sync with ST Core)
+// UI: Neon Cyclone (V39 Style)
 
-const extensionName = "Chronos_V41_Hybrid";
+const extensionName = "Chronos_V42_Authority";
 
 // =================================================================
-// 1. GLOBAL STATE & TOKENIZER LOGIC (The Core Fix)
+// 1. GLOBAL STATE & TOKENIZER (The Senior's Logic)
 // =================================================================
-let CHRONOS_REAL_TOKEN_LOAD = 0; // ตัวแปรเก็บค่าความจริงจาก Payload
+// ตัวแปรนี้คือ "ความจริงหนึ่งเดียว" ที่ได้จาก Final Prompt string
+let CHRONOS_FINAL_COUNT = 0; 
 
 const getChronosTokenizer = () => {
     try {
         const ctx = SillyTavern.getContext();
-        // พยายามดึง Model Name จากทุกที่ที่เป็นไปได้
         const model = ctx?.model || ctx?.settings?.model || SillyTavern?.settings?.model;
         if (!model) return null;
-        
-        // ดึง Tokenizer จากระบบ SillyTavern
         return SillyTavern.Tokenizers.getTokenizerForModel(model);
     } catch (e) {
-        console.warn("Chronos Tokenizer Error:", e);
         return null;
     }
 };
 
-const countPayloadTokensChronos = (body) => {
+// =================================================================
+// 2. THE CRITICAL HOOK (Generate Prompt)
+// =================================================================
+// นี่คือจุดที่รุ่นพี่สั่งมา: ดักจับตอน ST สร้าง String เสร็จแล้ว
+const chronosAfterPrompt = (data) => {
     try {
         const tokenizer = getChronosTokenizer();
-        if (!tokenizer) return 0;
-
-        // Chat Completion (Format มาตรฐาน)
-        if (Array.isArray(body?.messages)) {
-            return tokenizer.countChatTokens(body.messages);
+        if (tokenizer && data && data.prompt) {
+            // นับจาก String สุดท้ายที่จะส่งเข้า API จริงๆ
+            CHRONOS_FINAL_COUNT = tokenizer.encode(data.prompt).length;
+            console.log('[Chronos V42] Final Prompt Tokens:', CHRONOS_FINAL_COUNT);
         }
-
-        // Text Completion (Format เก่า)
-        if (typeof body?.prompt === 'string') {
-            return tokenizer.encode(body.prompt).length;
-        }
-
-        return 0;
     } catch (e) {
-        return 0;
+        console.warn('[Chronos] Final count failed', e);
     }
+    // ต้อง Return data กลับไปเสมอ ไม่งั้น ST พัง
+    return data;
 };
 
-// Helper สำหรับนับข้อความเดียว (ใช้ตอน Loop Chat)
-const getSingleMsgTokens = (text) => {
-    if (!text) return 0;
-    try {
-        const tokenizer = getChronosTokenizer();
-        if (tokenizer && typeof tokenizer.encode === 'function') {
-            return tokenizer.encode(text).length;
-        }
-        // Fallback ถ้าหา tokenizer ไม่เจอจริงๆ
-        return Math.round(text.length / 3);
-    } catch {
-        return Math.round(text.length / 3);
-    }
-};
-
+// =================================================================
+// 3. UTILITIES & PAYLOAD OPTIMIZER
+// =================================================================
 const stripHtmlToText = (html) => {
     if (!html) return "";
     let text = html.replace(/<br\s*\/?>/gi, '\n')
@@ -72,8 +55,34 @@ const stripHtmlToText = (html) => {
     return text;
 };
 
+// เรายังต้อง Hook ตรงนี้อยู่ เพื่อ "ตัด HTML" (แต่ไม่นับ Token ตรงนี้แล้ว)
+const optimizePayload = (data) => {
+    const processText = (text) => {
+        if (text && /<[^>]+>|&lt;[^&]+&gt;/.test(text)) {
+            return `[System Content:\n${stripHtmlToText(text)}]`;
+        }
+        return text;
+    };
+
+    if (data.body?.messages) {
+        data.body.messages.forEach(msg => {
+            msg.content = processText(msg.content);
+        });
+    } else if (data.body?.prompt) {
+        data.body.prompt = processText(data.body.prompt);
+    }
+    
+    // Refresh UI หลังส่งเสร็จ เพื่อให้ตัวเลข Final Count อัปเดต
+    setTimeout(() => {
+        const ins = document.getElementById('chronos-inspector');
+        if (ins && ins.style.display === 'block') renderInspector();
+    }, 1000);
+    
+    return data;
+};
+
 // =================================================================
-// 2. CALCULATOR (ใช้ค่าจริงจาก Global)
+// 4. CALCULATOR (Updated to use FINAL_COUNT)
 // =================================================================
 const calculateStats = () => {
     if (typeof SillyTavern === 'undefined') return { memoryRange: "Syncing...", original: 0, optimized: 0, remaining: 0, saved: 0, max: 0 };
@@ -81,79 +90,72 @@ const calculateStats = () => {
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
 
-    // --- 1. Max Context (Max of Maxes Logic - คงไว้เพราะแม่นยำ) ---
+    // --- 1. Max Context (Max of Maxes Logic) ---
     let maxTokens = 8192;
     const candidateValues = [];
-    const uiIds = ['max_context', 'max_tokens', 'cfg_ctx_size'];
-    
-    // Scan UI
-    uiIds.forEach(id => {
+    ['max_context', 'max_tokens', 'cfg_ctx_size'].forEach(id => {
         const el = document.getElementById(id);
         if (el && !isNaN(parseInt(el.value))) candidateValues.push(parseInt(el.value));
     });
-    // Scan API/Settings
     if (SillyTavern.main_api && SillyTavern.main_api.max_context) candidateValues.push(SillyTavern.main_api.max_context);
     if (context.max_context) candidateValues.push(context.max_context);
     
     const validValues = candidateValues.filter(v => typeof v === 'number' && v > 100);
     if (validValues.length > 0) maxTokens = Math.max(...validValues);
 
-    // --- 2. Original Load (หัวใจสำคัญ: ใช้ค่าจาก Payload จริง) ---
-    // ถ้า CHRONOS_REAL_TOKEN_LOAD มีค่า (คือเคยส่งข้อความแล้ว) ให้ใช้ค่านั้นเลย
-    // ถ้าไม่มี ให้ใช้ context.tokens (ค่าประมาณจากระบบ)
-    let originalTotalLoad = CHRONOS_REAL_TOKEN_LOAD || context.tokens || 0;
+    // --- 2. Original Load (The Authority Logic) ---
+    // ใช้ค่าจาก Hook generate_prompt ถ้ามี, ถ้าไม่มีให้ใช้ค่า Cache ของ ST
+    let originalTotalLoad = CHRONOS_FINAL_COUNT || context.tokens || 0;
 
-    // --- 3. Analyze Chat (เพื่อหา Memory Range และ Savings) ---
-    let sumOriginalChatTokens = 0;
-    let sumOptimizedChatTokens = 0;
-    let totalSaved = 0;
-    let chatDetails = [];
+    // --- 3. Estimate Savings (เพื่อโชว์ว่าประหยัดไปเท่าไหร่) ---
+    // ตรงนี้ใช้ Estimate ได้ เพราะเราแค่ต้องการ Delta (ส่วนต่าง)
+    let totalSavedEstimate = 0;
+    const tokenizer = getChronosTokenizer(); 
     
-    // ใช้ Overhead ประมาณการสำหรับการคำนวณ Range (แค่ 3-4 tokens ไม่กระทบ Total Load ที่เรา Fix แล้ว)
-    const EST_OVERHEAD = 4; 
+    // Helper นับแบบเร็ว
+    const quickCount = (text) => {
+        if (!text) return 0;
+        if (tokenizer && typeof tokenizer.encode === 'function') return tokenizer.encode(text).length;
+        return Math.round(text.length / 3);
+    };
 
-    chat.forEach((msg, index) => {
-        // A. Raw Size
-        const rawLen = getSingleMsgTokens(msg.mes) + EST_OVERHEAD;
-        sumOriginalChatTokens += rawLen;
-
-        // B. Optimized Size
+    chat.forEach((msg) => {
+        const rawLen = quickCount(msg.mes);
         let cleanContent = msg.mes;
         if (/<[^>]+>|&lt;[^&]+&gt;/.test(cleanContent)) {
              const clean = stripHtmlToText(cleanContent);
              cleanContent = `[System Content:\n${clean}]`;
         }
-        const optLen = getSingleMsgTokens(cleanContent) + EST_OVERHEAD;
-        sumOptimizedChatTokens += optLen;
-
-        // C. Diff
-        const diff = Math.max(0, rawLen - optLen);
-        totalSaved += diff;
-
-        chatDetails.push({ index: index, optimizedSize: optLen });
+        const optLen = quickCount(cleanContent);
+        totalSavedEstimate += Math.max(0, rawLen - optLen);
     });
 
     // --- 4. Final Math ---
-    // System Overhead = Totalจริง - Chatรวม
-    let staticOverhead = Math.max(0, originalTotalLoad - sumOriginalChatTokens);
-    
-    // Optimized Load = System + Optimized Chat
-    // (หรือจะเอา Original Load - Saved ก็ได้ ค่าเท่ากัน)
-    const optimizedLoad = Math.max(0, originalTotalLoad - totalSaved);
-    
+    // Optimized Load = Load จริง (ที่รวม System แล้ว) - ส่วนต่างที่ประหยัดได้
+    // หมายเหตุ: การคำนวณนี้เป็นการประมาณย้อนกลับ แต่แม่นยำกว่าเดิมมากเพราะตั้งต้นจาก Final Count
+    const optimizedLoad = Math.max(0, originalTotalLoad - totalSavedEstimate);
     const remainingSpace = Math.max(0, maxTokens - optimizedLoad);
 
-    // --- 5. Memory Range Logic ---
-    const availableForChat = maxTokens - staticOverhead;
+    // --- 5. Memory Range (Visual Guide) ---
+    // คำนวณคร่าวๆ ว่าแชทไหนอยู่ใน Range บ้าง
+    const availableForChat = maxTokens - (originalTotalLoad - quickCount(chat.map(m=>m.mes).join(''))); // หัก Chat ออกเพื่อหา System Overhead คร่าวๆ
+    
     let currentFill = 0;
     let startMsgIndex = -1;
     let rememberedCount = 0;
+    
+    // Loop ย้อนกลับ
+    for (let i = chat.length - 1; i >= 0; i--) {
+        let msgToken = quickCount(chat[i].mes);
+        // ถ้าข้อความนี้มีการตัด HTML ให้ใช้ขนาดที่ตัดแล้ว
+        if (/<[^>]+>|&lt;[^&]+&gt;/.test(chat[i].mes)) {
+            const clean = stripHtmlToText(chat[i].mes);
+            msgToken = quickCount(`[System Content:\n${clean}]`);
+        }
 
-    for (let i = chatDetails.length - 1; i >= 0; i--) {
-        const msgSize = chatDetails[i].optimizedSize;
-        if (currentFill + msgSize <= availableForChat) {
-            currentFill += msgSize;
-            startMsgIndex = chatDetails[i].index;
+        if (currentFill + msgToken <= availableForChat) {
+            currentFill += msgToken;
+            startMsgIndex = i;
             rememberedCount++;
         } else {
             break;
@@ -171,88 +173,64 @@ const calculateStats = () => {
         original: originalTotalLoad,
         optimized: optimizedLoad,
         remaining: remainingSpace,
-        saved: totalSaved,
+        saved: totalSavedEstimate,
         max: maxTokens
     };
 };
 
 // =================================================================
-// 3. UI SYSTEM (คืนร่างเดิม Neon Cyberpunk)
+// 5. UI SYSTEM (V39 CYCLONE STYLE 🌀)
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
     style.innerHTML = `
-        /* ORB STYLES (Original V39) */
+        /* ORB STYLES - CYCLONE SPIN */
         #chronos-orb {
             position: fixed; top: 150px; right: 20px; width: 40px; height: 40px;
-            background: radial-gradient(circle, rgba(20,0,30,0.9) 0%, rgba(0,0,0,1) 100%);
+            background: rgba(10, 0, 15, 0.9); 
             border: 2px solid #D500F9; border-radius: 50%;
             z-index: 999999; cursor: pointer; display: flex; align-items: center; justify-content: center;
             font-size: 20px; color: #E040FB; 
-            box-shadow: 0 0 15px rgba(213, 0, 249, 0.6), inset 0 0 10px rgba(213, 0, 249, 0.3);
-            user-select: none; animation: pulse-glow 3s infinite alternate;
-            transition: transform 0.2s;
+            box-shadow: 0 0 15px rgba(213, 0, 249, 0.6);
+            user-select: none; 
+            animation: spin-slow 4s linear infinite; /* หมุนติ้วๆ */
         }
-        #chronos-orb:hover { transform: scale(1.1); border-color: #00E676; color: #00E676; box-shadow: 0 0 25px #00E676; }
-        @keyframes pulse-glow { 0% { box-shadow: 0 0 10px #D500F9; } 100% { box-shadow: 0 0 20px #D500F9; } }
+        #chronos-orb:hover { border-color: #00E676; color: #00E676; box-shadow: 0 0 25px #00E676; }
+        @keyframes spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        /* INSPECTOR PANEL (Original V39) */
+        /* INSPECTOR PANEL */
         #chronos-inspector {
             position: fixed; top: 80px; right: 70px; width: 320px; 
-            background: rgba(10, 10, 12, 0.95); 
-            border: 1px solid #D500F9;
-            border-top: 3px solid #D500F9;
-            color: #E1BEE7; font-family: 'Consolas', 'Menlo', monospace; font-size: 12px;
+            background: rgba(10, 10, 15, 0.96); 
+            border: 1px solid #D500F9; border-top: 3px solid #D500F9;
+            color: #E1BEE7; font-family: 'Consolas', monospace; font-size: 12px;
             display: none; z-index: 999999; border-radius: 8px;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.8); 
-            backdrop-filter: blur(10px);
-            overflow: hidden;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.9); backdrop-filter: blur(5px);
         }
-
         .ins-header { 
-            background: linear-gradient(90deg, #4A0072, #2a0040); 
-            color: #fff; padding: 10px; font-weight: bold; letter-spacing: 1px;
-            display: flex; justify-content: space-between; align-items: center;
+            background: linear-gradient(90deg, #330044, #5c007a); 
+            color: #fff; padding: 10px; font-weight: bold; display: flex; justify-content: space-between; 
             border-bottom: 1px solid #D500F9;
         }
-
-        .control-zone { 
-            display: flex; gap: 15px; padding: 6px 10px; background: #1a0520; 
-            border-bottom: 1px solid #330044; font-size: 11px; color: #00E676; 
-        }
-        
-        .dashboard-zone { background: #050505; padding: 15px; border-bottom: 1px solid #333; }
-        .dash-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; align-items: center; }
-        .dash-val { font-weight: bold; font-size: 13px; }
-        
+        .control-zone { display: flex; gap: 15px; padding: 6px 10px; background: #220033; color: #00E676; font-size: 11px; border-bottom: 1px solid #550077; }
+        .dashboard-zone { background: #000; padding: 15px; border-bottom: 1px solid #333; }
+        .dash-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; }
         .progress-container { width: 100%; height: 6px; background: #222; border-radius: 3px; margin-top: 8px; overflow: hidden; }
-        .progress-bar { height: 100%; background: linear-gradient(90deg, #D500F9, #00E676); width: 0%; transition: width 0.4s ease-out; }
-
-        .ins-body { padding: 10px; background: #111; max-height: 400px; overflow-y: auto;}
+        .progress-bar { height: 100%; background: linear-gradient(90deg, #D500F9, #00E676); width: 0%; transition: width 0.4s; }
         
-        .msg-list { max-height: 120px; overflow-y: auto; border: 1px solid #333; margin-bottom: 10px; background: #0a0a0a; border-radius: 4px; }
-        .msg-item { padding: 6px; cursor: pointer; border-bottom: 1px solid #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #888; transition: 0.2s;}
-        .msg-item:hover { background: #330044; color: #fff; padding-left: 10px;}
-
-        #view-target-wrapper { margin-top:10px; border-top:1px dashed #444; padding-top:10px; display:none; animation: fade-in 0.3s; }
-        .view-area { 
-            background: #080808; color: #00E676; padding: 10px; height: 140px; 
-            overflow-y: auto; overflow-x: hidden;
-            font-size: 11px; line-height: 1.4;
-            white-space: pre-wrap; word-wrap: break-word; 
-            border: 1px solid #333; border-radius: 4px; margin-top: 5px;
-        }
-        .stat-badge { 
-            display: flex; justify-content: space-between; margin-top: 5px; 
-            background: #222; padding: 6px; border-radius: 4px; border: 1px solid #333;
-        }
-
+        .ins-body { padding: 10px; background: #0a0a0a; max-height: 400px; overflow-y: auto;}
+        .msg-list { max-height: 120px; overflow-y: auto; border: 1px solid #333; margin-bottom: 10px; background: #111; border-radius: 4px; }
+        .msg-item { padding: 6px; cursor: pointer; border-bottom: 1px solid #222; color: #888; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+        .msg-item:hover { background: #330044; color: #fff; }
+        
+        #view-target-wrapper { margin-top:10px; border-top:1px dashed #444; padding-top:10px; display:none; }
+        .view-area { background: #050505; color: #00E676; padding: 10px; height: 140px; overflow-y: auto; border: 1px solid #333; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; }
+        .stat-badge { display: flex; justify-content: space-between; margin-top: 5px; background: #222; padding: 6px; border-radius: 4px; }
+        
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #111; }
-        ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+        ::-webkit-scrollbar-thumb { background: #333; }
         ::-webkit-scrollbar-thumb:hover { background: #D500F9; }
-
-        @keyframes fade-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
     `;
     document.head.appendChild(style);
 };
@@ -263,18 +241,17 @@ const createUI = () => {
     const oldOrb = document.getElementById('chronos-orb'); if (oldOrb) oldOrb.remove();
     const oldPanel = document.getElementById('chronos-inspector'); if (oldPanel) oldPanel.remove();
 
-    const orb = document.createElement('div'); orb.id = 'chronos-orb'; orb.innerHTML = '⚡';
+    const orb = document.createElement('div'); orb.id = 'chronos-orb'; orb.innerHTML = '🌀'; // Cyclone Icon
     const ins = document.createElement('div'); ins.id = 'chronos-inspector';
     document.body.appendChild(orb); document.body.appendChild(ins);
     
-    orb.onclick = (e) => {
+    orb.onclick = () => {
         if (orb.getAttribute('data-dragging') === 'true') return;
         ins.style.display = (ins.style.display === 'none') ? 'block' : 'none';
         if (ins.style.display === 'block') renderInspector();
     };
 
-    makeDraggable(orb, 'orb'); 
-    makeDraggable(ins, 'panel');
+    makeDraggable(orb, 'orb'); makeDraggable(ins, 'panel');
 };
 
 const renderInspector = () => {
@@ -283,205 +260,130 @@ const renderInspector = () => {
 
     const chat = SillyTavern.getContext().chat || [];
     const stats = calculateStats();
-    
     const percent = stats.max > 0 ? Math.min((stats.optimized / stats.max) * 100, 100) : 0;
     
     let listHtml = chat.slice(-5).reverse().map((msg, i) => {
         const actualIdx = chat.length - 1 - i;
-        const preview = (msg.mes || "").substring(0, 25).replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        const roleIcon = msg.is_user ? '👤' : '🤖';
+        const preview = (msg.mes || "").substring(0, 25).replace(/</g, '&lt;');
         return `<div class="msg-item" onclick="viewAIVersion(${actualIdx})">
-                    <span style="color:#D500F9;margin-right:5px;">#${actualIdx}</span> ${roleIcon} ${preview}...
+                    <span style="color:#D500F9;">#${actualIdx}</span> ${msg.is_user ? '👤' : '🤖'} ${preview}...
                 </div>`;
     }).join('');
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V41</span>
-            <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
+            <span>CHRONOS V42 (Authority)</span>
+            <span style="cursor:pointer; color:#ff5252;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
-        
         <div class="control-zone">
-            <label style="cursor:pointer;"><input type="checkbox" onchange="toggleDrag('orb', this.checked)" ${dragConfig.orbUnlocked ? 'checked' : ''}> Move Orb</label>
-            <label style="cursor:pointer;"><input type="checkbox" onchange="toggleDrag('panel', this.checked)" ${dragConfig.panelUnlocked ? 'checked' : ''}> Move Win</label>
+            <label><input type="checkbox" onchange="toggleDrag('orb', this.checked)" ${dragConfig.orbUnlocked ? 'checked' : ''}> Orb</label>
+            <label><input type="checkbox" onchange="toggleDrag('panel', this.checked)" ${dragConfig.panelUnlocked ? 'checked' : ''}> Win</label>
         </div>
-
         <div class="dashboard-zone">
-            <div class="dash-row" style="border-bottom: 1px dashed #333; padding-bottom: 8px; margin-bottom: 8px;">
-                <span style="color:#aaa;">🧠 Active Memory</span>
-                <span class="dash-val" style="color:#E040FB;">${stats.memoryRange}</span>
-            </div>
-            
             <div class="dash-row">
-                <span style="color:#aaa;">🛡️ Tokens Saved</span>
-                <span class="dash-val" style="color:#00E676;">-${stats.saved} toks</span>
+                <span style="color:#aaa;">🧠 Context Range</span>
+                <span style="color:#E040FB; font-weight:bold;">${stats.memoryRange}</span>
             </div>
-
+            <div class="dash-row">
+                <span style="color:#aaa;">🛡️ Saved (Est.)</span>
+                <span style="color:#00E676; font-weight:bold;">-${stats.saved}</span>
+            </div>
             <div class="dash-row">
                 <span style="color:#fff;">🔋 Load / Max</span>
-                <span class="dash-val" style="color:#fff;">${stats.optimized} / ${stats.max}</span>
+                <span style="color:#fff; font-weight:bold;">${stats.optimized} / ${stats.max}</span>
             </div>
-
-            <div class="progress-container">
-                <div class="progress-bar" style="width: ${percent}%"></div>
-            </div>
-            
-            <div style="text-align:right; font-size:9px; color:#555; margin-top:3px;">Original Load: ${stats.original}</div>
+            <div class="progress-container"><div class="progress-bar" style="width: ${percent}%"></div></div>
+            <div style="font-size:9px; color:#555; text-align:right; margin-top:3px;">Source: ${CHRONOS_FINAL_COUNT > 0 ? 'Generate Prompt (Exact)' : 'ST Cache (Est)'}</div>
         </div>
-
         <div class="ins-body">
             <div style="display:flex; gap:5px; margin-bottom:10px;">
-                <input type="number" id="chronos-search-id" placeholder="Msg ID..." style="background:#222; border:1px solid #444; color:#fff; width:60px; padding:4px; border-radius:3px;">
-                <button onclick="searchById()" style="background:#D500F9; border:none; color:#000; padding:4px 10px; border-radius:3px; cursor:pointer; font-weight:bold;">INSPECT</button>
+                <input type="number" id="chronos-search-id" placeholder="ID" style="background:#222; border:1px solid #444; color:#fff; width:50px; padding:3px;">
+                <button onclick="searchById()" style="background:#D500F9; border:none; padding:3px 10px; cursor:pointer; font-weight:bold;">GO</button>
             </div>
-            
-            <div style="font-size:9px; color:#666; margin-bottom:4px; text-transform:uppercase;">Recent Messages</div>
             <div class="msg-list">${listHtml}</div>
-            
-            <div id="view-target-wrapper">
-                <div id="view-target-content"></div>
-            </div>
+            <div id="view-target-wrapper"><div id="view-target-content"></div></div>
         </div>
     `;
 };
 
 // =================================================================
-// 4. INTERACTION
+// 6. DRAG & VIEW UTILS
 // =================================================================
-window.toggleDrag = (type, isChecked) => {
-    if (type === 'orb') dragConfig.orbUnlocked = isChecked;
-    if (type === 'panel') {
-        dragConfig.panelUnlocked = isChecked;
-        const header = document.getElementById('panel-header');
-        if(header) header.style.cursor = isChecked ? 'move' : 'default';
-    }
+window.toggleDrag = (type, c) => {
+    if (type === 'orb') dragConfig.orbUnlocked = c;
+    if (type === 'panel') { dragConfig.panelUnlocked = c; document.getElementById('panel-header').style.cursor = c ? 'move' : 'default'; }
 };
-
 const makeDraggable = (elm, type) => {
-    let pos1=0, pos2=0, pos3=0, pos4=0;
-    const dragStart = (e) => {
-        if (type === 'orb' && !dragConfig.orbUnlocked) return;
-        if (type === 'panel' && !dragConfig.panelUnlocked) return;
-        if (type === 'panel' && !e.target.classList.contains('ins-header') && !e.target.parentElement.classList.contains('ins-header')) return;
-        
-        const clientX = e.clientX || e.touches[0].clientX; 
-        const clientY = e.clientY || e.touches[0].clientY;
-        pos3 = clientX; pos4 = clientY;
-        
-        document.onmouseup = dragEnd; document.onmousemove = dragAction;
-        document.ontouchend = dragEnd; document.ontouchmove = dragAction;
+    let pos1=0,pos2=0,pos3=0,pos4=0;
+    const ds = (e) => {
+        if ((type==='orb' && !dragConfig.orbUnlocked) || (type==='panel' && !dragConfig.panelUnlocked)) return;
+        if (type==='panel' && !e.target.closest('.ins-header')) return;
+        const c = e.touches ? e.touches[0] : e;
+        pos3=c.clientX; pos4=c.clientY;
+        document.onmouseup = de; document.onmousemove = da; document.ontouchend = de; document.ontouchmove = da;
         elm.setAttribute('data-dragging', 'true');
     };
-    const dragAction = (e) => {
-        const clientX = e.clientX || e.touches[0].clientX; 
-        const clientY = e.clientY || e.touches[0].clientY;
-        pos1 = pos3 - clientX; pos2 = pos4 - clientY; 
-        pos3 = clientX; pos4 = clientY;
-        elm.style.top = (elm.offsetTop - pos2) + "px"; 
-        elm.style.left = (elm.offsetLeft - pos1) + "px";
+    const da = (e) => {
+        const c = e.touches ? e.touches[0] : e;
+        pos1=pos3-c.clientX; pos2=pos4-c.clientY; pos3=c.clientX; pos4=c.clientY;
+        elm.style.top=(elm.offsetTop-pos2)+"px"; elm.style.left=(elm.offsetLeft-pos1)+"px";
         e.preventDefault();
     };
-    const dragEnd = () => {
-        document.onmouseup = null; document.onmousemove = null; 
-        document.ontouchend = null; document.ontouchmove = null;
-        setTimeout(() => elm.setAttribute('data-dragging', 'false'), 100);
-    };
-    elm.onmousedown = dragStart; elm.ontouchstart = dragStart;
+    const de = () => { document.onmouseup=null; document.onmousemove=null; document.ontouchend=null; document.ontouchmove=null; setTimeout(()=>elm.setAttribute('data-dragging','false'),100); };
+    elm.onmousedown=ds; elm.ontouchstart=ds;
 };
 
 window.searchById = () => {
-    const idInput = document.getElementById('chronos-search-id');
-    const id = parseInt(idInput.value);
+    const id = parseInt(document.getElementById('chronos-search-id').value);
     const chat = SillyTavern.getContext().chat || [];
-    if (isNaN(id) || id < 0 || id >= chat.length) { alert("Invalid ID"); return; }
-    viewAIVersion(id);
+    if (!isNaN(id) && id >= 0 && id < chat.length) viewAIVersion(id);
 };
 
 window.viewAIVersion = (index) => {
-    const context = SillyTavern.getContext(); 
-    const chat = context.chat || [];
+    const chat = SillyTavern.getContext().chat || [];
     const msg = chat[index];
     if (!msg) return;
-
-    const wrapper = document.getElementById('view-target-wrapper');
-    if (wrapper) wrapper.style.display = 'block';
-
-    const contentDiv = document.getElementById('view-target-content');
-    if (!contentDiv) return;
-
-    const rawTokens = getSingleMsgTokens(msg.mes);
-    let cleanText = stripHtmlToText(msg.mes);
-    let aiViewText = msg.mes; 
     
-    if (/<[^>]+>|&lt;[^&]+&gt;/.test(msg.mes)) {
-        aiViewText = `[System Content:\n${cleanText}]`;
-    }
+    document.getElementById('view-target-wrapper').style.display = 'block';
+    
+    const tokenizer = getChronosTokenizer();
+    const quickCount = (text) => tokenizer ? tokenizer.encode(text).length : text.length/3;
 
-    const cleanTokens = getSingleMsgTokens(aiViewText);
-    const saved = Math.max(0, rawTokens - cleanTokens);
+    const rawLen = quickCount(msg.mes);
+    
+    let cleanText = stripHtmlToText(msg.mes);
+    let aiViewText = msg.mes;
+    if (/<[^>]+>|&lt;[^&]+&gt;/.test(msg.mes)) aiViewText = `[System Content:\n${cleanText}]`;
+    
+    const optLen = quickCount(aiViewText);
+    const saved = Math.max(0, rawLen - optLen);
 
-    contentDiv.innerHTML = `
-        <div style="margin-bottom:3px; color:#D500F9; font-weight:bold; font-size:10px;">
-            TARGET ID: #${index} (${msg.is_user ? 'USER' : 'AI'})
-        </div>
+    document.getElementById('view-target-content').innerHTML = `
+        <div style="color:#E040FB; margin-bottom:5px; font-size:10px;">ID: #${index}</div>
         <div class="view-area">${aiViewText.replace(/</g, '&lt;')}</div>
         <div class="stat-badge">
-            <span style="color:#aaa;">Raw: ${rawTokens}</span>
-            <span style="color:#00E676;">Sent: ${cleanTokens}</span>
-            <span style="color:#E040FB;">Saved: -${saved}</span>
+            <span style="color:#aaa;">Raw: ${rawLen}</span>
+            <span style="color:#fff;">Sent: ${optLen}</span>
+            <span style="color:#00E676;">Saved: -${saved}</span>
         </div>
     `;
 };
 
 // =================================================================
-// 5. HOOK LOGIC (Payload Interceptor - หัวใจของรุ่นพี่)
-// =================================================================
-const optimizePayload = (data) => {
-    
-    // 🔴 1. นับ Token จริงจาก Payload ที่จะถูกส่ง (ตามสูตร ChatGPT)
-    // ค่านี้จะถูกเก็บไว้ใช้ใน calculateStats() รอบถัดไป
-    const realCount = countPayloadTokensChronos(data.body);
-    if (realCount > 0) {
-        CHRONOS_REAL_TOKEN_LOAD = realCount;
-    }
-
-    // 🔴 2. Logic การตัด HTML (HTML Stripping)
-    const processText = (text) => {
-        if (text && /<[^>]+>|&lt;[^&]+&gt;/.test(text)) {
-            return `[System Content:\n${stripHtmlToText(text)}]`;
-        }
-        return text;
-    };
-
-    if (data.body?.messages) {
-        data.body.messages.forEach(msg => {
-            msg.content = processText(msg.content);
-        });
-    } else if (data.body?.prompt) {
-        data.body.prompt = processText(data.body.prompt);
-    }
-    
-    // 🔴 3. Refresh UI หลังจากส่งเสร็จ
-    setTimeout(() => {
-        const ins = document.getElementById('chronos-inspector');
-        if (ins && ins.style.display === 'block') renderInspector();
-    }, 500);
-    
-    return data;
-};
-
-// =================================================================
-// 6. INITIALIZATION
+// 7. INITIALIZATION
 // =================================================================
 (function() {
     injectStyles();
-    setTimeout(createUI, 2000); 
-
+    setTimeout(createUI, 2000);
+    
     if (typeof SillyTavern !== 'undefined') {
-        console.log(`[${extensionName}] Hooks registered. Real Token Tracking Active.`);
+        console.log(`[${extensionName}] Ready. Hooking generate_prompt.`);
+        // HOOK ที่ 1: เพื่อดึงค่า Token จริง (Final Count)
+        SillyTavern.extension_manager.register_hook('generate_prompt', chronosAfterPrompt);
+        
+        // HOOK ที่ 2: เพื่อตัด HTML ออกจากข้อความ (Payload Mod)
         SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
-    } else {
-        console.warn(`[${extensionName}] SillyTavern object not found.`);
     }
 })();
+
