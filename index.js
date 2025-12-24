@@ -1,8 +1,9 @@
-// index.js - Chronos V46 (Live Monitor) 💓⚡
-// Logic: Context King + Auto Refresh Interval
+// index.js - Chronos V47 (Polished Experience) 💎🌪️
+// Logic: Context King + Auto Refresh
+// UX: Scroll Lock (Fixes jumping list during refresh)
 // UI: Neon Cyclone (V39 Style)
 
-const extensionName = "Chronos_V46_LiveMonitor";
+const extensionName = "Chronos_V47_Polished";
 
 // =================================================================
 // 1. GLOBAL STATE
@@ -74,7 +75,6 @@ const optimizePayload = (data) => {
         }
     } catch (e) {}
 
-    // Force Refresh ทันทีหลังส่ง
     setTimeout(() => {
         const ins = document.getElementById('chronos-inspector');
         if (ins && ins.style.display === 'block') renderInspector();
@@ -104,7 +104,7 @@ const calculateStats = () => {
     const validValues = candidateValues.filter(v => typeof v === 'number' && v > 100);
     if (validValues.length > 0) maxTokens = Math.max(...validValues);
 
-    // --- Load Logic (Context King) ---
+    // --- Load Logic ---
     let currentLoad = 0;
     let sourceLabel = "Waiting...";
 
@@ -181,12 +181,11 @@ const calculateStats = () => {
 };
 
 // =================================================================
-// 4. UI SYSTEM (V39 Style)
+// 4. UI SYSTEM (V39 Style) - With Scroll Fix
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
     style.innerHTML = `
-        /* ORB STYLES */
         #chronos-orb {
             position: fixed; top: 150px; right: 20px; width: 40px; height: 40px;
             background: radial-gradient(circle, rgba(20,0,30,0.9) 0%, rgba(0,0,0,1) 100%);
@@ -201,7 +200,6 @@ const injectStyles = () => {
         #chronos-orb:hover { transform: scale(1.1); border-color: #00E676; color: #00E676; box-shadow: 0 0 25px #00E676; }
         @keyframes spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
-        /* INSPECTOR PANEL */
         #chronos-inspector {
             position: fixed; top: 80px; right: 70px; width: 320px; 
             background: rgba(10, 10, 12, 0.95); 
@@ -264,6 +262,10 @@ const renderInspector = () => {
     const ins = document.getElementById('chronos-inspector');
     if (ins.style.display === 'none') return;
 
+    // --- 1. [FIX] Remember Scroll Position ---
+    const msgListEl = ins.querySelector('.msg-list');
+    const prevScrollTop = msgListEl ? msgListEl.scrollTop : 0;
+
     const chat = SillyTavern.getContext().chat || [];
     const stats = calculateStats();
     
@@ -280,7 +282,7 @@ const renderInspector = () => {
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V46 (Live Monitor)</span>
+            <span>🚀 CHRONOS V47 (Polished)</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -328,10 +330,16 @@ const renderInspector = () => {
             </div>
         </div>
     `;
+
+    // --- 2. [FIX] Restore Scroll Position ---
+    const newMsgListEl = ins.querySelector('.msg-list');
+    if (newMsgListEl) {
+        newMsgListEl.scrollTop = prevScrollTop;
+    }
 };
 
 // =================================================================
-// 5. UTILS
+// 6. UTILS
 // =================================================================
 window.toggleDrag = (type, isChecked) => {
     if (type === 'orb') dragConfig.orbUnlocked = isChecked;
@@ -422,20 +430,20 @@ window.viewAIVersion = (index) => {
 };
 
 // =================================================================
-// 6. INITIALIZATION
+// 7. INITIALIZATION
 // =================================================================
 (function() {
     injectStyles();
     setTimeout(createUI, 2000); 
 
     if (typeof SillyTavern !== 'undefined') {
-        console.log(`[${extensionName}] Ready. Live Monitoring Active.`);
+        console.log(`[${extensionName}] Ready. Live Monitoring + Scroll Fix.`);
         
         SillyTavern.extension_manager.register_hook('generate_prompt', chronosAfterPrompt);
         SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
 
-        // 🔥 AUTO-REFRESH UI: อัปเดตทุก 2 วินาที เพื่อดึงค่า context.tokens ล่าสุด
+        // 🔥 Auto-refresh loop
         setInterval(() => {
             const ins = document.getElementById('chronos-inspector');
             if (ins && ins.style.display === 'block') {
