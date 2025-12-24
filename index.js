@@ -1,26 +1,47 @@
-// index.js - Chronos V39 (Context Master) 🌌📏
-// Fixed: "Max of Maxes" Logic (Trust the highest value found)
+// index.js - Chronos V42 (The Final Hybrid) 🌪️👑
+// UI: V39 Cyclone Style (Neon Cyberpunk)
+// Logic: V42 Generate Prompt Authority (Fixed by Senior's Orders)
 
-const extensionName = "Chronos_V39_ContextMaster";
+const extensionName = "Chronos_V42_Hybrid";
 
 // =================================================================
-// 1. UTILITIES
+// 1. GLOBAL AUTHORITY (The Source of Truth)
 // =================================================================
-const getSysTokenCount = (text) => {
-    if (!text) return 0;
+let CHRONOS_FINAL_COUNT = 0; // เก็บค่า Token จริงที่นับจาก Final Prompt
+
+// Helper ดึง Tokenizer
+const getChronosTokenizer = () => {
     try {
-        if (typeof SillyTavern !== 'undefined' && SillyTavern.Tokenizers && typeof SillyTavern.Tokenizers.encode === 'function') {
-            return SillyTavern.Tokenizers.encode(text).length;
-        }
-        if (typeof GPTTokenizer_Encoding_Encode === 'function') {
-            return GPTTokenizer_Encoding_Encode(text).length;
-        }
-        return Math.round(text.length / 2.7); 
+        const ctx = SillyTavern.getContext();
+        const model = ctx?.model || ctx?.settings?.model || SillyTavern?.settings?.model;
+        if (!model) return null;
+        return SillyTavern.Tokenizers.getTokenizerForModel(model);
     } catch (e) {
-        return Math.round(text.length / 3);
+        return null;
     }
 };
 
+// =================================================================
+// 2. THE CRITICAL HOOK (Generate Prompt) - ตามคำสั่งรุ่นพี่
+// =================================================================
+// Hook นี้จะทำงานตอน ST สร้าง Prompt เสร็จแล้ว (รวม System + Jailbreak + Template)
+// เราจะนับ Token ตรงนี้แหละ คือของจริงที่สุด!
+const chronosAfterPrompt = (data) => {
+    try {
+        const tokenizer = getChronosTokenizer();
+        if (tokenizer && data && data.prompt) {
+            CHRONOS_FINAL_COUNT = tokenizer.encode(data.prompt).length;
+            console.log('[Chronos] Final Prompt Tokens:', CHRONOS_FINAL_COUNT);
+        }
+    } catch (e) {
+        console.warn('[Chronos] Final count failed', e);
+    }
+    return data; // ส่งคืน data เสมอ ห้ามแก้ payload ตรงนี้ตามกฎ!
+};
+
+// =================================================================
+// 3. UTILITIES & PAYLOAD MODIFIER (Optimize Only)
+// =================================================================
 const stripHtmlToText = (html) => {
     if (!html) return "";
     let text = html.replace(/<br\s*\/?>/gi, '\n')
@@ -33,99 +54,106 @@ const stripHtmlToText = (html) => {
     return text;
 };
 
+// Hook นี้เอาไว้ "ตัด HTML" เท่านั้น (ไม่นับ Token แล้ว เพราะรุ่นพี่บอกว่าเพี้ยน)
+const optimizePayload = (data) => {
+    const processText = (text) => {
+        if (text && /<[^>]+>|&lt;[^&]+&gt;/.test(text)) {
+            return `[System Content:\n${stripHtmlToText(text)}]`;
+        }
+        return text;
+    };
+
+    if (data.body?.messages) {
+        data.body.messages.forEach(msg => {
+            msg.content = processText(msg.content);
+        });
+    } else if (data.body?.prompt) {
+        data.body.prompt = processText(data.body.prompt);
+    }
+    
+    // Refresh UI หลังส่งเสร็จเพื่อให้ตัวเลข Final Count อัปเดต
+    setTimeout(() => {
+        const ins = document.getElementById('chronos-inspector');
+        if (ins && ins.style.display === 'block') renderInspector();
+    }, 1000);
+    
+    return data;
+};
+
 // =================================================================
-// 2. CORE LOGIC: Calculator (The "Max of Maxes" Fix)
+// 4. CALCULATOR (Logic ใหม่ที่ใช้ค่าจริง)
 // =================================================================
 const calculateStats = () => {
-    if (typeof SillyTavern === 'undefined') return { memoryRange: "N/A", original: 0, optimized: 0, remaining: 0, saved: 0, max: 0 };
+    if (typeof SillyTavern === 'undefined') return { memoryRange: "Syncing...", original: 0, optimized: 0, remaining: 0, saved: 0, max: 0 };
     
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
 
-    // --- 1. Find Max Context (Scan everywhere, pick highest) ---
-    // เราจะรวบรวมตัวเลขจากทุกแหล่งที่เป็นไปได้
-    let candidateValues = [];
-
-    // แหล่งที่ 1: UI Input (ค่าที่คุณพิมพ์/เลื่อนเอง)
-    const uiIds = ['max_context', 'max_tokens', 'cfg_ctx_size'];
-    uiIds.forEach(id => {
+    // --- 1. Max Context (Max of Maxes Logic) ---
+    let maxTokens = 8192;
+    const candidateValues = [];
+    ['max_context', 'max_tokens', 'cfg_ctx_size'].forEach(id => {
         const el = document.getElementById(id);
         if (el && !isNaN(parseInt(el.value))) candidateValues.push(parseInt(el.value));
     });
-
-    // แหล่งที่ 2: API Settings (ค่าที่ตั้งไว้ใน Backend)
-    if (SillyTavern.main_api && SillyTavern.main_api.max_context) {
-        candidateValues.push(SillyTavern.main_api.max_context);
-    }
-
-    // แหล่งที่ 3: Context Object (ค่ามาตรฐาน)
+    if (SillyTavern.main_api && SillyTavern.main_api.max_context) candidateValues.push(SillyTavern.main_api.max_context);
     if (context.max_context) candidateValues.push(context.max_context);
-    if (context.max_tokens) candidateValues.push(context.max_tokens);
-
-    // *สูตรเด็ด*: กรองเอาค่าขยะออก (เช่น 0 หรือ NaN) แล้วเอาค่าที่ "มากที่สุด"
-    // เพราะถ้าคุณตั้ง 200,000 แปลว่าคุณต้องการ 200,000 แน่นอน (ไม่มีใครตั้งค่าหลอกตัวเองให้สูงเล่นๆ)
-    let maxTokens = 8192; // Default fallback
-    const validValues = candidateValues.filter(v => typeof v === 'number' && v > 0);
     
-    if (validValues.length > 0) {
-        maxTokens = Math.max(...validValues);
-    }
+    const validValues = candidateValues.filter(v => typeof v === 'number' && v > 100);
+    if (validValues.length > 0) maxTokens = Math.max(...validValues);
 
-    // --- 2. Original Total Load ---
-    let originalTotalLoad = context.tokens || 0;
-    // Fallback อ่านจาก UI Bar
-    if (originalTotalLoad === 0 && document.getElementById('token_count_bar')) {
-        const text = document.getElementById('token_count_bar').innerText;
-        const match = text.match(/(\d+)/);
-        if (match) originalTotalLoad = parseInt(match[1]);
-    }
+    // --- 2. Original Load (Authority Logic) ---
+    // ใช้ค่าจาก Hook generate_prompt (CHRONOS_FINAL_COUNT) เป็นพระเจ้า
+    // ถ้ายังไม่มี (เพิ่งเปิดโปรแกรม) ให้ใช้ context.tokens ไปพลางๆ
+    let originalTotalLoad = CHRONOS_FINAL_COUNT || context.tokens || 0;
 
-    // --- 3. Analyze Chat Components ---
-    let sumOriginalChatTokens = 0;
-    let sumOptimizedChatTokens = 0;
-    let totalSaved = 0;
-    let chatDetails = [];
-    const MSG_OVERHEAD = 3; 
+    // --- 3. Estimate Savings (คำนวณส่วนต่างคร่าวๆ) ---
+    let totalSavedEstimate = 0;
+    const tokenizer = getChronosTokenizer(); 
+    
+    const quickCount = (text) => {
+        if (!text) return 0;
+        if (tokenizer && typeof tokenizer.encode === 'function') return tokenizer.encode(text).length;
+        return Math.round(text.length / 2.7);
+    };
 
-    chat.forEach((msg, index) => {
-        // Original
-        const rawLen = getSysTokenCount(msg.mes) + MSG_OVERHEAD;
-        sumOriginalChatTokens += rawLen;
-
-        // Optimized
+    chat.forEach((msg) => {
+        const rawLen = quickCount(msg.mes);
         let cleanContent = msg.mes;
         if (/<[^>]+>|&lt;[^&]+&gt;/.test(cleanContent)) {
              const clean = stripHtmlToText(cleanContent);
              cleanContent = `[System Content:\n${clean}]`;
         }
-        const optLen = getSysTokenCount(cleanContent) + MSG_OVERHEAD;
-        sumOptimizedChatTokens += optLen;
-
-        // Diff
-        const diff = Math.max(0, rawLen - optLen);
-        totalSaved += diff;
-
-        chatDetails.push({ index: index, optimizedSize: optLen });
+        const optLen = quickCount(cleanContent);
+        totalSavedEstimate += Math.max(0, rawLen - optLen);
     });
 
-    // --- 4. Final Calculation ---
-    // System Overhead
-    let staticOverhead = Math.max(0, originalTotalLoad - sumOriginalChatTokens);
-    
-    const optimizedLoad = staticOverhead + sumOptimizedChatTokens;
+    // --- 4. Final Math ---
+    // Optimized Load = Load จริง - ส่วนต่างที่ประหยัดได้
+    const optimizedLoad = Math.max(0, originalTotalLoad - totalSavedEstimate);
     const remainingSpace = Math.max(0, maxTokens - optimizedLoad);
 
-    // --- 5. Memory Range ---
-    const availableForChat = maxTokens - staticOverhead;
+    // --- 5. Memory Range (Visual Guide) ---
+    // คำนวณ Overhead เพื่อหาพื้นที่แชท
+    const chatTextSum = chat.map(m=>m.mes).join('');
+    const estimatedSystemOverhead = Math.max(0, originalTotalLoad - quickCount(chatTextSum));
+    const availableForChat = maxTokens - estimatedSystemOverhead;
+    
     let currentFill = 0;
     let startMsgIndex = -1;
     let rememberedCount = 0;
+    
+    for (let i = chat.length - 1; i >= 0; i--) {
+        let msgToken = quickCount(chat[i].mes);
+        // ถ้าข้อความนี้มีการตัด HTML ให้ใช้ขนาดที่ตัดแล้ว
+        if (/<[^>]+>|&lt;[^&]+&gt;/.test(chat[i].mes)) {
+            const clean = stripHtmlToText(chat[i].mes);
+            msgToken = quickCount(`[System Content:\n${clean}]`);
+        }
 
-    for (let i = chatDetails.length - 1; i >= 0; i--) {
-        const msgSize = chatDetails[i].optimizedSize;
-        if (currentFill + msgSize <= availableForChat) {
-            currentFill += msgSize;
-            startMsgIndex = chatDetails[i].index;
+        if (currentFill + msgToken <= availableForChat) {
+            currentFill += msgToken;
+            startMsgIndex = i;
             rememberedCount++;
         } else {
             break;
@@ -143,13 +171,13 @@ const calculateStats = () => {
         original: originalTotalLoad,
         optimized: optimizedLoad,
         remaining: remainingSpace,
-        saved: totalSaved,
+        saved: totalSavedEstimate,
         max: maxTokens
     };
 };
 
 // =================================================================
-// 3. UI SYSTEM
+// 5. UI SYSTEM (V39 CYCLONE STYLE - Original Code)
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
@@ -162,10 +190,12 @@ const injectStyles = () => {
             z-index: 999999; cursor: pointer; display: flex; align-items: center; justify-content: center;
             font-size: 20px; color: #E040FB; 
             box-shadow: 0 0 15px rgba(213, 0, 249, 0.6), inset 0 0 10px rgba(213, 0, 249, 0.3);
-            user-select: none; animation: pulse-glow 3s infinite alternate;
+            user-select: none; 
+            animation: spin-slow 4s linear infinite; /* Cyclone Spin */
             transition: transform 0.2s;
         }
         #chronos-orb:hover { transform: scale(1.1); border-color: #00E676; color: #00E676; box-shadow: 0 0 25px #00E676; }
+        @keyframes spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         @keyframes pulse-glow { 0% { box-shadow: 0 0 10px #D500F9; } 100% { box-shadow: 0 0 20px #D500F9; } }
 
         /* INSPECTOR PANEL */
@@ -269,7 +299,7 @@ const renderInspector = () => {
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V39</span>
+            <span>🚀 CHRONOS V42 (Hybrid)</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -285,7 +315,7 @@ const renderInspector = () => {
             </div>
             
             <div class="dash-row">
-                <span style="color:#aaa;">🛡️ Tokens Saved</span>
+                <span style="color:#aaa;">🛡️ Tokens Saved (Est.)</span>
                 <span class="dash-val" style="color:#00E676;">-${stats.saved} toks</span>
             </div>
 
@@ -298,7 +328,7 @@ const renderInspector = () => {
                 <div class="progress-bar" style="width: ${percent}%"></div>
             </div>
             
-            <div style="text-align:right; font-size:9px; color:#555; margin-top:3px;">Original Load: ${stats.original}</div>
+            <div style="text-align:right; font-size:9px; color:#555; margin-top:3px;">Source: ${CHRONOS_FINAL_COUNT > 0 ? 'Generate Prompt (Exact)' : 'ST Cache'}</div>
         </div>
 
         <div class="ins-body">
@@ -318,7 +348,7 @@ const renderInspector = () => {
 };
 
 // =================================================================
-// 4. INTERACTION
+// 6. INTERACTION & HOOKS
 // =================================================================
 window.toggleDrag = (type, isChecked) => {
     if (type === 'orb') dragConfig.orbUnlocked = isChecked;
@@ -381,7 +411,10 @@ window.viewAIVersion = (index) => {
     const contentDiv = document.getElementById('view-target-content');
     if (!contentDiv) return;
 
-    const rawTokens = getSysTokenCount(msg.mes);
+    const tokenizer = getChronosTokenizer();
+    const quickCount = (text) => tokenizer ? tokenizer.encode(text).length : Math.round(text.length/3);
+
+    const rawTokens = quickCount(msg.mes);
     let cleanText = stripHtmlToText(msg.mes);
     let aiViewText = msg.mes; 
     
@@ -389,7 +422,7 @@ window.viewAIVersion = (index) => {
         aiViewText = `[System Content:\n${cleanText}]`;
     }
 
-    const cleanTokens = getSysTokenCount(aiViewText);
+    const cleanTokens = quickCount(aiViewText);
     const saved = Math.max(0, rawTokens - cleanTokens);
 
     contentDiv.innerHTML = `
@@ -405,27 +438,8 @@ window.viewAIVersion = (index) => {
     `;
 };
 
-const optimizePayload = (data) => {
-    const processText = (text) => {
-        if (text && /<[^>]+>|&lt;[^&]+&gt;/.test(text)) {
-            return `[System Content:\n${stripHtmlToText(text)}]`;
-        }
-        return text;
-    };
-    if (data.body && data.body.messages) {
-        data.body.messages.forEach(msg => { msg.content = processText(msg.content); });
-    } else if (data.body && data.body.prompt) {
-        data.body.prompt = processText(data.body.prompt);
-    }
-    setTimeout(() => {
-        const ins = document.getElementById('chronos-inspector');
-        if (ins && ins.style.display === 'block') renderInspector();
-    }, 1000);
-    return data;
-};
-
 // =================================================================
-// 5. INITIALIZATION
+// 7. INITIALIZATION
 // =================================================================
 (function() {
     injectStyles();
@@ -433,10 +447,8 @@ const optimizePayload = (data) => {
 
     if (typeof SillyTavern !== 'undefined') {
         console.log(`[${extensionName}] Hooks registered.`);
-        SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
-        SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
-    } else {
-        console.warn(`[${extensionName}] SillyTavern object not found.`);
-    }
-})();
+        // HOOK 1 (AUTHORITY): นับ Token จาก Generate Prompt
+        SillyTavern.extension_manager.register_hook('generate_prompt', chronosAfterPrompt);
         
+        // HOOK 2 (MODIFIER): ตัด HTML (แต่ไม่นับ Token แล้ว)
+        SillyTavern.extension_manager.register_ho
