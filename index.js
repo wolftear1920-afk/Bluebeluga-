@@ -1,8 +1,8 @@
-// index.js - Chronos V56 (Adaptive Intelligence) 🧠🌊
-// Logic: Reads directly from API limits & Adapts to "Unlock" state dynamically
-// Fixes: Supports model switching without hardcoded values
+// index.js - Chronos V57 (Direct Line) 📉🎯
+// Logic: Strict adherence to 'context_size' setting. No auto-expand.
+// Behavior: Max Context = Slider Value (always).
 
-const extensionName = "Chronos_V56_Adaptive";
+const extensionName = "Chronos_V57_DirectLine";
 
 // =================================================================
 // 1. HELPERS
@@ -50,7 +50,7 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 3. ADAPTIVE CALCULATOR (The Smart Logic)
+// 3. STRICT CALCULATOR (USER LOGIC)
 // =================================================================
 const calculateStats = () => {
     if (typeof SillyTavern === 'undefined') return { memoryRange: "Loading...", original: 0, optimized: 0, saved: 0, max: 0 };
@@ -89,40 +89,30 @@ const calculateStats = () => {
          stTotalTokens = manualChat + 2000;
     }
 
-    // --- C. DYNAMIC MAX CONTEXT ---
-    let maxTokens = 8192; // Fallback
-    
-    // 1. Check if "Unlock" is active
-    const isUnlocked = SillyTavern.settings?.unlock_context || SillyTavern.settings?.unlocked_context;
+    // --- C. MAX CONTEXT (USER REQUESTED LOGIC) ---
+    let maxTokens;
 
-    if (isUnlocked) {
-        // ถ้าปลดล็อค: ให้เช็คว่า API ส่งค่า Limit มาไหม? (เช่น Gemini อาจส่งมา 1M)
-        if (SillyTavern.main_api?.max_context && SillyTavern.main_api.max_context > 0) {
-            maxTokens = SillyTavern.main_api.max_context;
-        } else {
-            // ถ้า API ไม่บอก Limit (เป็น 0 หรือ undefined)
-            // ให้ใช้ค่า Load จริง + Buffer 20% เพื่อให้กราฟดูสวย ไม่เต็มหลอด
-            // วิธีนี้ปลอดภัยสุดเวลาเปลี่ยนโมเดล เพราะกราฟจะยืดหดตามการใช้งานจริง
-            maxTokens = Math.max(stTotalTokens * 1.2, 100000); 
-        }
+    // Logic ตามที่คุณส่งมาเป๊ะๆ
+    if (SillyTavern.settings?.context_size) {
+        maxTokens = parseInt(SillyTavern.settings.context_size);
+    } else if (context.max_context) {
+        maxTokens = parseInt(context.max_context);
     } else {
-        // ถ้าไม่ปลดล็อค: ใช้ค่าจาก Slider หรือ Settings ปกติ
-        if (SillyTavern.settings?.context_size) maxTokens = parseInt(SillyTavern.settings.context_size);
-        else if (context.max_context) maxTokens = parseInt(context.max_context);
+        maxTokens = 8192;
     }
 
-    // Sanity Check: อย่าให้ Max น้อยกว่า Load จริง (เดี๋ยวหลอดทะลุ)
+    // Unlock = เปลี่ยนแค่ Label ไม่เปลี่ยนเพดาน
+    const isUnlocked = SillyTavern.settings?.unlock_context;
+
+    // --- D. RESULT ---
     const finalOptimizedLoad = Math.max(0, stTotalTokens - totalSavings);
-    if (finalOptimizedLoad > maxTokens) {
-        maxTokens = finalOptimizedLoad; 
-    }
-
-    // --- D. STATUS ---
+    
+    // Status Logic
     let memoryRangeText = "Healthy";
     const percent = maxTokens > 0 ? (finalOptimizedLoad / maxTokens) : 0;
     
-    if (isUnlocked && percent > 0.9) memoryRangeText = "High Load";
-    else if (!isUnlocked && percent > 0.95) memoryRangeText = "Context Full";
+    if (percent > 1) memoryRangeText = "Overflow"; // เกินเพดานที่ตั้งไว้
+    else if (percent > 0.9) memoryRangeText = "Critical";
     else if (percent > 0.75) memoryRangeText = "Heavy";
 
     return {
@@ -148,6 +138,7 @@ const renderInspector = () => {
     const chat = SillyTavern.getContext().chat || [];
     const stats = calculateStats();
     
+    // Visual Bar Cap at 100% (แม้ตัวเลขจะเกิน)
     let percent = 0;
     if (stats.max > 0) {
         percent = (stats.optimized / stats.max) * 100;
@@ -163,13 +154,15 @@ const renderInspector = () => {
                 </div>`;
     }).join('');
 
-    // Format numbers nicely
+    // Format numbers
     const fmt = (n) => Math.round(n).toLocaleString();
-    const maxDisplay = stats.unlocked && stats.max > 999999 ? "∞ (1M+)" : fmt(stats.max);
+    
+    // Display Label: Show "Unlock" if checked, but keep the number static
+    const maxLabel = stats.unlocked ? `${fmt(stats.max)} (🔓)` : fmt(stats.max);
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V56 (Adaptive)</span>
+            <span>🚀 CHRONOS V57 (Direct)</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -185,8 +178,8 @@ const renderInspector = () => {
             </div>
 
             <div class="dash-row">
-                <span style="color:#fff;">🔋 Load (${stats.unlocked ? 'Unlocked' : 'Fixed'})</span>
-                <span class="dash-val" style="color:#fff;">${fmt(stats.optimized)} / ${maxDisplay}</span>
+                <span style="color:#fff;">🔋 Load</span>
+                <span class="dash-val" style="color:#fff;">${fmt(stats.optimized)} / ${maxLabel}</span>
             </div>
             
             <div class="dash-row" style="margin-top:4px; font-size:10px; color:#666;">
