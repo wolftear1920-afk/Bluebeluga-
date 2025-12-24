@@ -1,16 +1,14 @@
-// index.js - Chronos V30 (The Sandbox) 🏜️⚖️
+// index.js - Chronos V32 (Native Linker) 🔗💎
 
-const extensionName = "Chronos_V30_Sandbox";
+const extensionName = "Chronos_V32_Native";
 
-// ค่าเริ่มต้น (เดี๋ยวเราไปหมุนหาค่าจริงใน Sandbox กัน)
+// ค่าเริ่มต้น (ไม่ต้องมีตัวหารแล้ว มีแค่ Base Offset เผื่อไว้)
 let config = {
-    thaiDivisor: 1.65, // ค่าที่คำนวณจากเคสของคุณ (1250/756 ≈ 1.65)
-    engDivisor: 3.6,
-    baseOffset: 2640   // ค่าหัวคิว
+    baseOffset: 0 // เดี๋ยวเราจะลองคำนวณ Base อัตโนมัติด้วย
 };
 
 // =================================================================
-// Logic
+// 1. Logic: Stripper (ล้างโค้ดเหมือนเดิม)
 // =================================================================
 const stripHtmlToText = (html) => {
     let text = html.replace(/<br\s*\/?>/gi, '\n')
@@ -23,15 +21,37 @@ const stripHtmlToText = (html) => {
     return text;
 };
 
-const estimateTokens = (text) => {
+// =================================================================
+// 2. Logic: Native Tokenizer (พระเอกของงาน)
+// =================================================================
+const getNativeTokenCount = (text) => {
     if (!text) return 0;
-    const thaiChars = (text.match(/[\u0E00-\u0E7F]/g) || []).length;
-    const otherChars = text.length - thaiChars;
-    // สูตรคำนวณ
-    return Math.round(thaiChars / config.thaiDivisor) + Math.round(otherChars / config.engDivisor);
+    
+    try {
+        // วิธีที่ 1: เรียกผ่าน Module ของ SillyTavern โดยตรง (แม่นยำที่สุด)
+        if (typeof SillyTavern !== 'undefined' && SillyTavern.Tokenizers && typeof SillyTavern.Tokenizers.encode === 'function') {
+            const tokens = SillyTavern.Tokenizers.encode(text);
+            return tokens.length;
+        }
+        
+        // วิธีที่ 2: ถ้าหาไม่เจอ ลองเรียกผ่าน Global Encoder (บางเวอร์ชันใช้ตัวนี้)
+        if (typeof GPTTokenizer_Encoding_Encode === 'function') {
+            return GPTTokenizer_Encoding_Encode(text).length;
+        }
+
+        // วิธีที่ 3: กันตาย (ถ้าหาไม่เจอจริงๆ ค่อยใช้สูตรหาร)
+        console.warn("[Chronos] Native tokenizer not found, falling back to estimation.");
+        return Math.round(text.length / 2.5);
+        
+    } catch (e) {
+        console.error("[Chronos] Tokenizer Error:", e);
+        return 0;
+    }
 };
 
-// คำนวณภาพรวม
+// =================================================================
+// 3. Logic: Context Calculator
+// =================================================================
 const calculateStats = () => {
     if (typeof SillyTavern === 'undefined') return { chatRaw: 0, chatReal: 0, totalRaw: 0, totalReal: 0 };
     
@@ -39,45 +59,75 @@ const calculateStats = () => {
     const chat = context.chat || [];
     const maxTokens = context.max_context || 8192;
     
-    let totalRaw = 0;
-    let totalReal = 0;
+    // --- 1. คำนวณ Base (System + Card) แบบ Native ---
+    let baseTokens = 0;
+    
+    // ลองคำนวณ Base จากข้อมูลจริง
+    if (context.characterId && SillyTavern.characters && SillyTavern.characters[context.characterId]) {
+        const char = SillyTavern.characters[context.characterId];
+        // รวมทุกอย่างที่เป็นโครงสร้างหลัก
+        const charText = (char.description || "") + "\n" + 
+                         (char.personality || "") + "\n" + 
+                         (char.scenario || "") + "\n" + 
+                         (char.first_mes || "");
+        
+        // บวก System Prompt (ประมาณการ หรือดึงถ้าทำได้)
+        // System Prompt มักจะซ่อนอยู่ลึก เราจะบวกค่าเฉลี่ยมาตรฐาน หรือใช้ค่า Offset ที่ user ตั้งเผื่อไว้
+        baseTokens = getNativeTokenCount(charText) + config.baseOffset;
+    } else {
+        baseTokens = config.baseOffset;
+    }
+
+    // --- 2. คำนวณ Chat History ---
+    let chatRaw = 0;
+    let chatReal = 0;
     let rememberedCount = 0;
-    let currentTokens = config.baseOffset; 
+    
+    // เริ่มต้นนับที่ Base
+    let currentRawTotal = baseTokens;
+    let currentRealTotal = baseTokens;
 
     for (let i = chat.length - 1; i >= 0; i--) {
         const msg = chat[i];
         
-        // Raw
-        const rawTok = estimateTokens(msg.mes) + 5;
-        totalRaw += rawTok;
-
-        // Real
+        // Raw (แบบ Silly) - ใช้ Native Count
+        const rawTok = getNativeTokenCount(msg.mes) + 5; // +5 เผื่อ Metadata
+        
+        // Real (แบบตัดแล้ว) - ใช้ Native Count
         let content = msg.mes;
         if (content.includes('<') && content.includes('>')) {
             const clean = stripHtmlToText(content);
             content = `[System Content:\n${clean}]`;
         }
-        const realTok = estimateTokens(content) + 5;
-        totalReal += realTok;
+        const realTok = getNativeTokenCount(content) + 5;
 
-        if (currentTokens + realTok < maxTokens) {
-            currentTokens += realTok;
+        // เช็คโควต้า (ใช้ยอด Real เป็นตัวตัดสิน)
+        if (currentRealTotal + realTok < maxTokens) {
+            chatRaw += rawTok;
+            chatReal += realTok;
+            
+            currentRawTotal += rawTok;
+            currentRealTotal += realTok;
             rememberedCount++;
+        } else {
+            // หยุดนับเมื่อเต็ม
+            break;
         }
     }
 
     return {
-        chatRaw: totalRaw,
-        chatReal: totalReal,
-        totalRaw: totalRaw + config.baseOffset,
-        totalReal: totalReal + config.baseOffset,
+        base: baseTokens,
+        chatRaw: chatRaw,
+        chatReal: chatReal,
+        totalRaw: currentRawTotal,
+        totalReal: currentRealTotal,
         max: maxTokens,
         count: rememberedCount
     };
 };
 
 // =================================================================
-// UI
+// UI (ยังคงฟีเจอร์เดิมครบถ้วน)
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
@@ -93,7 +143,7 @@ const injectStyles = () => {
         @keyframes spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
         #chronos-inspector {
-            position: fixed; top: 80px; right: 70px; width: 340px; 
+            position: fixed; top: 80px; right: 70px; width: 320px; 
             background: rgba(15, 0, 20, 0.98); border: 2px solid #D500F9;
             color: #E1BEE7; font-family: 'Consolas', monospace; font-size: 11px;
             display: none; z-index: 999999; border-radius: 12px;
@@ -102,24 +152,22 @@ const injectStyles = () => {
         .ins-header { background: linear-gradient(90deg, #330044, #5c007a); color: #fff; padding: 8px 10px; font-weight: bold; border-bottom: 1px solid #D500F9; display: flex; justify-content: space-between; }
         .control-zone { display: flex; gap: 10px; padding: 5px 10px; background: #220033; border-bottom: 1px solid #550077; font-size: 10px; color: #00E676; }
         
-        /* Sandbox Zone */
-        .sandbox-zone { background: #1a1a1a; padding: 10px; border-bottom: 1px solid #333; }
-        .sandbox-area { width: 95%; height: 60px; background: #000; border: 1px solid #555; color: #ccc; font-size: 10px; padding: 5px; resize: none; }
-        
-        .calib-row { display: flex; align-items: center; justify-content: space-between; margin-top: 5px; }
-        .calib-input { background: #000; border: 1px solid #555; color: #fff; width: 50px; text-align: center; }
+        .calib-zone { background: #111; padding: 10px; border-bottom: 1px solid #333; }
+        .calib-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 5px; }
+        .calib-input { background: #000; border: 1px solid #555; color: #fff; width: 60px; text-align: center; }
         
         .dashboard-zone { background: #000; padding: 10px; border-bottom: 1px solid #333; }
         .dash-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
-        
+        .sub-row { display: flex; justify-content: space-between; margin-bottom: 2px; padding-left: 10px; color: #777; font-size: 10px; }
+
         .ins-body { padding: 10px; }
         .search-row { display: flex; gap: 5px; margin-bottom: 10px; }
         .search-input { background: #222; border: 1px solid #D500F9; color: #fff; padding: 3px; width: 50px; border-radius: 3px; }
         .search-btn { background: #D500F9; color: #000; border: none; padding: 3px 8px; cursor: pointer; border-radius: 3px; font-weight:bold;}
-        .msg-list { max-height: 80px; overflow-y: auto; border: 1px solid #333; margin-bottom: 10px; background: #111; }
+        .msg-list { max-height: 100px; overflow-y: auto; border: 1px solid #333; margin-bottom: 10px; background: #111; }
         .msg-item { padding: 5px; cursor: pointer; border-bottom: 1px solid #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #aaa; }
         .msg-item:hover { background: #330044; color: #fff; }
-        .view-area { background: #000; color: #00E676; padding: 8px; height: 100px; overflow-y: auto; font-size: 10px; white-space: pre-wrap; border: 1px solid #5c007a; border-radius: 4px; }
+        .view-area { background: #000; color: #00E676; padding: 8px; height: 120px; overflow-y: auto; font-size: 10px; white-space: pre-wrap; border: 1px solid #5c007a; border-radius: 4px; }
         .stat-badge { display: flex; justify-content: space-between; margin-top: 5px; background: #222; padding: 5px; border-radius: 4px; }
     `;
     document.head.appendChild(style);
@@ -155,7 +203,7 @@ const renderInspector = () => {
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🏜️ SANDBOX CALIBRATOR V30</span>
+            <span>🔗 NATIVE LINKER V32</span>
             <span style="cursor:pointer;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -164,29 +212,33 @@ const renderInspector = () => {
             <label style="display:flex;gap:5px;cursor:pointer;"><input type="checkbox" onchange="toggleDrag('panel', this.checked)" ${dragConfig.panelUnlocked ? 'checked' : ''}>🔓Win</label>
         </div>
 
-        <div class="sandbox-zone">
-            <div style="color:#E040FB; margin-bottom:3px;">1. วางข้อความทดสอบที่นี่:</div>
-            <textarea id="sandbox-text" class="sandbox-area" placeholder="วางข้อความที่รู้จำนวน Token แล้วที่นี่..." oninput="updateSandbox()"></textarea>
-            
-            <div style="color:#E040FB; margin-top:5px;">2. ปรับตัวเลขจนกว่าจะตรงเป้า:</div>
+        <div class="calib-zone">
+            <div style="font-size:10px; color:#aaa; margin-bottom:5px;">
+                ระบบกำลังใช้ <b>Native Tokenizer</b> ของ SillyTavern คำนวณ
+            </div>
             <div class="calib-row">
-                <span>🇹🇭 หารไทย (1.65):</span>
-                <input type="number" step="0.01" value="${config.thaiDivisor}" class="calib-input" onchange="updateConfig('thai', this.value); updateSandbox();">
+                <span>Extra Offset:</span>
+                <input type="number" value="${config.baseOffset}" class="calib-input" onchange="updateOffset(this.value)">
             </div>
-            
-            <div style="margin-top:5px; padding:5px; background:#222; border-radius:4px; text-align:center;">
-                Sandbox Calculated: <b id="sandbox-result" style="color:#FF9800; font-size:14px;">0</b> Tokens
-            </div>
+            <div style="font-size:9px; color:#555;">(ใส่เลขเพิ่ม ถ้า Base ยังไม่ตรงเป๊ะ)</div>
+            <button onclick="renderInspector()" style="width:100%; margin-top:5px; background:#333; color:#fff; border:none; cursor:pointer;">🔄 REFRESH</button>
         </div>
 
         <div class="dashboard-zone">
             <div class="dash-row">
-                <span style="color:#FF9800;">🟠 Total Raw (Silly):</span>
+                <span style="color:#FF9800;">🟠 Total Raw:</span>
                 <b style="color:#FF9800;">${stats.totalRaw}</b>
             </div>
+            <div class="sub-row">
+                <span>(Base: ${stats.base} | Chat: ${stats.chatRaw})</span>
+            </div>
+
             <div class="dash-row" style="border-top:1px solid #333; margin-top:5px; padding-top:5px;">
-                <span style="color:#00E676;">🟢 Total Real (Sent):</span>
+                <span style="color:#00E676;">🟢 Total Real:</span>
                 <b style="color:#00E676;">${stats.totalReal} / ${stats.max}</b>
+            </div>
+            <div class="sub-row">
+                <span style="color:#00E676;">(Chat Real: ${stats.chatReal})</span>
             </div>
         </div>
 
@@ -201,20 +253,8 @@ const renderInspector = () => {
     `;
 };
 
-// ฟังก์ชันคำนวณสดใน Sandbox
-window.updateSandbox = () => {
-    const text = document.getElementById('sandbox-text').value;
-    const tokens = estimateTokens(text); // คำนวณโดยใช้ค่า Config ปัจจุบัน
-    document.getElementById('sandbox-result').innerText = tokens;
-};
-
-window.updateConfig = (type, value) => {
-    const val = parseFloat(value);
-    if (val > 0) {
-        if (type === 'thai') config.thaiDivisor = val;
-        if (type === 'eng') config.engDivisor = val;
-        // ไม่ต้อง render ใหม่ทั้งหมด แค่อัปเดตตัวเลข sandbox
-    }
+window.updateOffset = (value) => {
+    config.baseOffset = parseInt(value) || 0;
 };
 
 window.toggleDrag = (type, isChecked) => {
@@ -261,10 +301,10 @@ window.searchById = () => {
 window.viewAIVersion = (index) => {
     const chat = SillyTavern.getContext().chat;
     const msg = chat[index].mes;
-    const rawTokens = estimateTokens(msg);
-    const cleanText = stripHtmlToText(msg);
+    const rawTokens = getNativeTokenCount(msg.mes);
+    const cleanText = stripHtmlToText(msg.mes);
     const aiViewText = `[System Content:\n${cleanText}]`;
-    const cleanTokens = estimateTokens(aiViewText);
+    const cleanTokens = getNativeTokenCount(aiViewText);
     const saved = rawTokens - cleanTokens;
 
     document.getElementById('view-target').innerHTML = `
@@ -294,4 +334,4 @@ if (typeof SillyTavern !== 'undefined') {
     SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
     SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
 }
-
+    
