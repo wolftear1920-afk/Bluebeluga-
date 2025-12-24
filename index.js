@@ -1,23 +1,20 @@
 // index.js - Chronos V39 (Context Master) 🌌📏
-// Full Version: Cyberpunk UI + Fixed Token Logic + Max Slider Patch
+// Fixed: Force read Context Value (even when settings menu is closed)
 
 const extensionName = "Chronos_V39_ContextMaster";
 
 // =================================================================
-// 1. UTILITIES: Tokenizer & Text Processing
+// 1. UTILITIES
 // =================================================================
 const getSysTokenCount = (text) => {
     if (!text) return 0;
     try {
-        // 1. Priority: SillyTavern Internal Tokenizer
         if (typeof SillyTavern !== 'undefined' && SillyTavern.Tokenizers && typeof SillyTavern.Tokenizers.encode === 'function') {
             return SillyTavern.Tokenizers.encode(text).length;
         }
-        // 2. Fallback: Global Encoder
         if (typeof GPTTokenizer_Encoding_Encode === 'function') {
             return GPTTokenizer_Encoding_Encode(text).length;
         }
-        // 3. Last Resort: Estimated
         return Math.round(text.length / 2.7); 
     } catch (e) {
         return Math.round(text.length / 3);
@@ -37,7 +34,7 @@ const stripHtmlToText = (html) => {
 };
 
 // =================================================================
-// 2. CORE LOGIC: Calculator (Fixed Max & Overhead)
+// 2. CORE LOGIC (Fixed Max Context Reading)
 // =================================================================
 const calculateStats = () => {
     if (typeof SillyTavern === 'undefined') return { memoryRange: "N/A", original: 0, optimized: 0, remaining: 0, saved: 0, max: 0 };
@@ -45,22 +42,33 @@ const calculateStats = () => {
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
 
-    // --- 1. Max Context (Auto-Detect Logic - FIXED) ---
+    // --- 1. Max Context (Aggressive Read) ---
     let maxTokens = 0;
+    
+    // ลิสต์ ID ที่เป็นไปได้ (Chat Completion = max_context, Text Completion = max_tokens)
     const potentialIds = ['max_context', 'max_tokens', 'cfg_ctx_size'];
     
-    // เช็คทุก Slider ที่เป็นไปได้ และต้องไม่ถูกซ่อน (offsetParent != null)
     for (const id of potentialIds) {
         const el = document.getElementById(id);
-        if (el && el.offsetParent !== null && !isNaN(parseInt(el.value))) {
-            maxTokens = parseInt(el.value);
-            break; 
+        // แก้ไข: ตัด el.offsetParent ทิ้ง -> อ่านค่าทันทีแม้เมนูจะปิดอยู่
+        if (el && !isNaN(parseInt(el.value))) {
+            const val = parseInt(el.value);
+            // กรองค่าที่ผิดปกติ (เช่น 0 หรือ น้อยเกินไปผิดวิสัย)
+            if (val > 100) { 
+                maxTokens = val;
+                break; 
+            }
         }
     }
 
-    // Fallback ถ้าหาใน UI ไม่เจอ
+    // Fallback: ถ้าหาใน UI ไม่เจอจริงๆ ให้ใช้ค่าจากระบบ
     if (!maxTokens || maxTokens === 0) {
-        maxTokens = context.max_context || context.max_tokens || 8192;
+        // ลองดึงจาก request settings ถ้ามี
+        if (SillyTavern.main_api && SillyTavern.main_api.max_context) {
+            maxTokens = SillyTavern.main_api.max_context;
+        } else {
+            maxTokens = context.max_context || context.max_tokens || 8192;
+        }
     }
 
     // --- 2. Original Total Load ---
@@ -100,7 +108,7 @@ const calculateStats = () => {
     });
 
     // --- 4. Final Calculation ---
-    // System Overhead = Total (ST) - Chat (Raw Sum)
+    // System Overhead
     let staticOverhead = Math.max(0, originalTotalLoad - sumOriginalChatTokens);
     
     const optimizedLoad = staticOverhead + sumOptimizedChatTokens;
@@ -140,7 +148,7 @@ const calculateStats = () => {
 };
 
 // =================================================================
-// 3. UI SYSTEM: Styles (Neon Cyberpunk)
+// 3. UI SYSTEM
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
@@ -309,7 +317,7 @@ const renderInspector = () => {
 };
 
 // =================================================================
-// 4. INTERACTION & HOOKS
+// 4. INTERACTION
 // =================================================================
 window.toggleDrag = (type, isChecked) => {
     if (type === 'orb') dragConfig.orbUnlocked = isChecked;
@@ -430,4 +438,4 @@ const optimizePayload = (data) => {
         console.warn(`[${extensionName}] SillyTavern object not found.`);
     }
 })();
-    
+                
