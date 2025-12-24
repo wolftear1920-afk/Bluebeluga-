@@ -1,15 +1,36 @@
-// index.js - Chronos V27 (Perfect Calibration) 🎯⚖️
+// index.js - Chronos V28 (Persistent & Smart Click) 💾🖱️
 
-const extensionName = "Chronos_V27_Calibration";
+const extensionName = "Chronos_V28_Persistent";
 
-// ค่าตัวหารเริ่มต้น
+// ค่าตัวหารเริ่มต้น (Calibration)
 let calibration = {
     thaiDivisor: 1.3,
     engDivisor: 3.5
 };
 
+// Config การลาก
+let dragConfig = { orbUnlocked: false, panelUnlocked: false };
+
 // =================================================================
-// Logic
+// 1. Logic: Save/Load System (จำตำแหน่ง)
+// =================================================================
+const savePosition = (id, top, left) => {
+    localStorage.setItem(`chronos_pos_${id}`, JSON.stringify({ top, left }));
+};
+
+const loadPosition = (id, element) => {
+    const saved = localStorage.getItem(`chronos_pos_${id}`);
+    if (saved) {
+        const pos = JSON.parse(saved);
+        element.style.top = pos.top;
+        element.style.left = pos.left;
+        // ป้องกันตกขอบจอ (ถ้าเคยลากไปไกลแล้วย่อจอ)
+        /* (Optional constraints logic could go here) */
+    }
+};
+
+// =================================================================
+// 2. Logic: Stripper & Estimator
 // =================================================================
 const stripHtmlToText = (html) => {
     let text = html.replace(/<br\s*\/?>/gi, '\n')
@@ -29,15 +50,12 @@ const estimateTokens = (text) => {
     return Math.round(thaiChars / calibration.thaiDivisor) + Math.round(otherChars / calibration.engDivisor);
 };
 
-// คำนวณ Context แบบคู่ขนาน (Raw vs Real)
 const calculateDualContext = () => {
     if (typeof SillyTavern === 'undefined') return { raw: 0, real: 0, max: 0, count: 0 };
-    
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
     const maxTokens = context.max_context || 8192; 
     
-    // 1. Base Tokens
     let baseRaw = 0;
     if (context.characterId && SillyTavern.characters && SillyTavern.characters[context.characterId]) {
         const char = SillyTavern.characters[context.characterId];
@@ -45,26 +63,20 @@ const calculateDualContext = () => {
         baseRaw = estimateTokens(baseText) + 500;
     }
     
-    // 2. Chat History
     let currentRaw = baseRaw;
     let currentReal = baseRaw;
     let rememberedMsgCount = 0;
 
     for (let i = chat.length - 1; i >= 0; i--) {
         const msg = chat[i];
-        
-        // แบบ Raw (เหมือน Silly) -> นับดื้อๆ เลย
         const rawTok = estimateTokens(msg.mes) + 5;
         
-        // แบบ Real (ของ Extension) -> ตัดก่อนนับ
         let content = msg.mes;
         if (content.includes('<') && content.includes('>')) {
-            const clean = stripHtmlToText(content);
-            content = `[System Content:\n${clean}]`;
+            content = `[System Content:\n${stripHtmlToText(content)}]`;
         }
         const realTok = estimateTokens(content) + 5;
 
-        // เช็คโควต้า (ใช้ยอด Real เป็นตัวตัดเกณฑ์ เพราะเราส่งแบบ Real)
         if (currentReal + realTok < maxTokens) {
             currentRaw += rawTok;
             currentReal += realTok;
@@ -73,12 +85,11 @@ const calculateDualContext = () => {
             break;
         }
     }
-
     return { raw: currentRaw, real: currentReal, max: maxTokens, count: rememberedMsgCount };
 };
 
 // =================================================================
-// UI
+// 3. UI
 // =================================================================
 const injectStyles = () => {
     const style = document.createElement('style');
@@ -121,6 +132,8 @@ const injectStyles = () => {
         
         .dashboard-zone { background: #000; padding: 10px; border-bottom: 1px solid #333; }
         .dash-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        .progress-bg { width: 100%; height: 6px; background: #333; border-radius: 3px; overflow: hidden; margin-top: 5px; }
+        .progress-fill { height: 100%; background: linear-gradient(90deg, #00E676, #00C853); width: 0%; transition: width 0.5s; }
         
         .ins-body { padding: 10px; }
         .search-row { display: flex; gap: 5px; margin-bottom: 10px; }
@@ -134,8 +147,6 @@ const injectStyles = () => {
     `;
     document.head.appendChild(style);
 };
-
-let dragConfig = { orbUnlocked: false, panelUnlocked: false };
 
 const createUI = () => {
     const old = document.getElementById('chronos-orb');
@@ -153,22 +164,25 @@ const createUI = () => {
     document.body.appendChild(orb);
     document.body.appendChild(ins);
 
-    orb.onclick = (e) => {
-        if (orb.getAttribute('data-dragging') === 'true') return;
+    // Load ตำแหน่งที่บันทึกไว้
+    loadPosition('orb', orb);
+    loadPosition('panel', ins);
+
+    // ติดตั้งระบบลากแบบใหม่ (Smart Click)
+    setupSmartDrag(orb, 'orb', () => {
+        // Callback เมื่อเกิดการ "คลิก" (ไม่ใช่ลาก)
         ins.style.display = (ins.style.display === 'none') ? 'block' : 'none';
         if (ins.style.display === 'block') renderInspector();
-    };
+    });
 
-    makeDraggable(orb, 'orb');
-    makeDraggable(ins, 'panel');
+    setupSmartDrag(ins, 'panel', null); // Panel ไม่ต้องมีคลิก
 };
 
 const renderInspector = () => {
     const ins = document.getElementById('chronos-inspector');
     const chat = SillyTavern.getContext().chat || [];
-    
-    // คำนวณ 2 แบบ
     const stats = calculateDualContext();
+    const percent = Math.min((stats.used / stats.max) * 100, 100);
 
     let listHtml = chat.slice(-5).reverse().map((msg, i) => {
         const actualIdx = chat.length - 1 - i;
@@ -178,7 +192,7 @@ const renderInspector = () => {
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🎯 CALIBRATOR V27</span>
+            <span>💾 V28 PERSISTENT</span>
             <span style="cursor:pointer;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -188,38 +202,34 @@ const renderInspector = () => {
         </div>
 
         <div class="calib-zone">
-            <div style="color:#E040FB; margin-bottom:5px;">จูนค่าหาร (Divisor):</div>
+            <div style="color:#E040FB; margin-bottom:5px;">Calibration (Th/En):</div>
             <div class="calib-row">
-                <span>🇹🇭 ไทย (1.3):</span>
+                <span>🇹🇭:</span>
                 <input type="number" step="0.1" value="${calibration.thaiDivisor}" class="calib-input" onchange="updateCalib('thai', this.value)">
-            </div>
-            <div class="calib-row">
-                <span>🇺🇸 Eng (3.5):</span>
+                <span>🇺🇸:</span>
                 <input type="number" step="0.1" value="${calibration.engDivisor}" class="calib-input" onchange="updateCalib('eng', this.value)">
             </div>
-            <button onclick="renderInspector()" style="width:100%; margin-top:5px; background:#333; color:#fff; border:none; cursor:pointer;">🔄 คำนวณใหม่</button>
+            <button onclick="renderInspector()" style="width:100%; margin-top:5px; background:#333; color:#fff; border:none; cursor:pointer;">🔄 Recalculate</button>
         </div>
 
         <div class="dashboard-zone">
             <div class="dash-row" style="border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">
-                <span style="color:#FF9800;">🟠 Raw (เทียบ Silly):</span>
+                <span style="color:#FF9800;">🟠 Raw:</span>
                 <b style="color:#FF9800;">${stats.raw} Tok</b>
             </div>
-            
             <div class="dash-row">
-                <span style="color:#00E676;">🟢 Real (ส่งจริง):</span>
+                <span style="color:#00E676;">🟢 Real:</span>
                 <b style="color:#00E676;">${stats.real} / ${stats.max}</b>
             </div>
-            
+            <div class="progress-bg"><div class="progress-fill" style="width: ${percent}%"></div></div>
             <div class="dash-row" style="margin-top:8px;">
-                <span style="color:#aaa;">จำได้จริง:</span>
-                <span style="color:#E040FB;">${stats.count} ข้อความล่าสุด</span>
+                <span style="color:#aaa;">Memory:</span>
+                <span style="color:#E040FB;">${stats.count} msgs</span>
             </div>
         </div>
 
         <div class="ins-body">
             <div class="search-row">
-                <span>ส่อง ID:</span>
                 <input type="number" id="chronos-search-id" class="search-input" placeholder="ID">
                 <button class="search-btn" onclick="searchById()">Check</button>
             </div>
@@ -229,6 +239,79 @@ const renderInspector = () => {
     `;
 };
 
+// =================================================================
+// 4. Smart Drag System (แก้ปัญหาคลิกยาก)
+// =================================================================
+const setupSmartDrag = (elm, type, onClick) => {
+    let pos1=0, pos2=0, pos3=0, pos4=0;
+    let isDragging = false; // ตัวจับว่าขยับเมาส์ไปเยอะไหม
+    let startX = 0, startY = 0;
+
+    const dragStart = (e) => {
+        // เช็คว่า Unlock หรือยัง
+        if (type === 'orb' && !dragConfig.orbUnlocked) {
+            // ถ้าล็อคอยู่ ให้กดคลิกได้ปกติเลย ไม่ต้องเข้าโหมดลาก
+            if (onClick) return; // ปล่อยให้ event click ทำงานตามปกติ
+        }
+        
+        // ถ้าเป็น Panel ต้องจับที่ Header
+        if (type === 'panel') {
+             if (!dragConfig.panelUnlocked) return;
+             if (!e.target.classList.contains('ins-header') && !e.target.parentElement.classList.contains('ins-header')) return;
+        }
+
+        const clientX = e.clientX || e.touches[0].clientX;
+        const clientY = e.clientY || e.touches[0].clientY;
+        
+        // เริ่มต้นลาก
+        pos3 = clientX; pos4 = clientY;
+        startX = clientX; startY = clientY;
+        isDragging = false; // รีเซ็ตสถานะ
+
+        document.onmouseup = dragEnd; document.onmousemove = dragAction;
+        document.ontouchend = dragEnd; document.ontouchmove = dragAction;
+    };
+
+    const dragAction = (e) => {
+        const clientX = e.clientX || e.touches[0].clientX;
+        const clientY = e.clientY || e.touches[0].clientY;
+
+        // คำนวณระยะที่ขยับ
+        const moveX = Math.abs(clientX - startX);
+        const moveY = Math.abs(clientY - startY);
+
+        // ถ้าขยับเกิน 5px ถือว่า "ลาก" (ไม่ใช่คลิกแล้ว)
+        if (moveX > 5 || moveY > 5) {
+            isDragging = true;
+        }
+
+        // ถ้า Lock อยู่ ห้ามขยับตำแหน่ง
+        if ((type === 'orb' && !dragConfig.orbUnlocked) || (type === 'panel' && !dragConfig.panelUnlocked)) return;
+
+        pos1 = pos3 - clientX; pos2 = pos4 - clientY;
+        pos3 = clientX; pos4 = clientY;
+        elm.style.top = (elm.offsetTop - pos2) + "px";
+        elm.style.left = (elm.offsetLeft - pos1) + "px";
+        e.preventDefault();
+    };
+
+    const dragEnd = () => {
+        document.onmouseup = null; document.onmousemove = null;
+        document.ontouchend = null; document.ontouchmove = null;
+
+        // บันทึกตำแหน่งลง LocalStorage
+        if (isDragging) {
+            savePosition(type, elm.style.top, elm.style.left);
+        } else {
+            // ถ้าขยับเมาส์น้อยกว่า 5px ถือเป็น "คลิก" -> เรียกฟังก์ชันเปิดเมนู
+            if (onClick) onClick();
+        }
+    };
+
+    elm.onmousedown = dragStart; elm.ontouchstart = dragStart;
+};
+
+// --- Helpers ---
 window.updateCalib = (type, value) => {
     const val = parseFloat(value);
     if (val > 0) {
@@ -244,31 +327,6 @@ window.toggleDrag = (type, isChecked) => {
         const header = document.getElementById('panel-header');
         if(header) header.style.cursor = isChecked ? 'move' : 'default';
     }
-};
-
-const makeDraggable = (elm, type) => {
-    let pos1=0, pos2=0, pos3=0, pos4=0;
-    const dragStart = (e) => {
-        if (type === 'orb' && !dragConfig.orbUnlocked) return;
-        if (type === 'panel' && !dragConfig.panelUnlocked) return;
-        if (type === 'panel' && !e.target.classList.contains('ins-header') && !e.target.parentElement.classList.contains('ins-header')) return;
-        const clientX = e.clientX || e.touches[0].clientX; const clientY = e.clientY || e.touches[0].clientY;
-        pos3 = clientX; pos4 = clientY;
-        document.onmouseup = dragEnd; document.onmousemove = dragAction;
-        document.ontouchend = dragEnd; document.ontouchmove = dragAction;
-        elm.setAttribute('data-dragging', 'true');
-    };
-    const dragAction = (e) => {
-        const clientX = e.clientX || e.touches[0].clientX; const clientY = e.clientY || e.touches[0].clientY;
-        pos1 = pos3 - clientX; pos2 = pos4 - clientY; pos3 = clientX; pos4 = clientY;
-        elm.style.top = (elm.offsetTop - pos2) + "px"; elm.style.left = (elm.offsetLeft - pos1) + "px";
-        e.preventDefault();
-    };
-    const dragEnd = () => {
-        document.onmouseup = null; document.onmousemove = null; document.ontouchend = null; document.ontouchmove = null;
-        setTimeout(() => elm.setAttribute('data-dragging', 'false'), 100);
-    };
-    elm.onmousedown = dragStart; elm.ontouchstart = dragStart;
 };
 
 window.searchById = () => {
@@ -314,4 +372,4 @@ if (typeof SillyTavern !== 'undefined') {
     SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
     SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
 }
-    
+
