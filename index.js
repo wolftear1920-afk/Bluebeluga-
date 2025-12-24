@@ -1,11 +1,12 @@
-// index.js - Chronos V28 (Base Splitter) 🧱💬
+// index.js - Chronos V30 (The Sandbox) 🏜️⚖️
 
-const extensionName = "Chronos_V28_BaseSplit";
+const extensionName = "Chronos_V30_Sandbox";
 
-// ค่าตัวหารเริ่มต้น (Calibration)
-let calibration = {
-    thaiDivisor: 1.3,
-    engDivisor: 3.5
+// ค่าเริ่มต้น (เดี๋ยวเราไปหมุนหาค่าจริงใน Sandbox กัน)
+let config = {
+    thaiDivisor: 1.65, // ค่าที่คำนวณจากเคสของคุณ (1250/756 ≈ 1.65)
+    engDivisor: 3.6,
+    baseOffset: 2640   // ค่าหัวคิว
 };
 
 // =================================================================
@@ -26,74 +27,50 @@ const estimateTokens = (text) => {
     if (!text) return 0;
     const thaiChars = (text.match(/[\u0E00-\u0E7F]/g) || []).length;
     const otherChars = text.length - thaiChars;
-    return Math.round(thaiChars / calibration.thaiDivisor) + Math.round(otherChars / calibration.engDivisor);
+    // สูตรคำนวณ
+    return Math.round(thaiChars / config.thaiDivisor) + Math.round(otherChars / config.engDivisor);
 };
 
-// คำนวณแยกส่วน (Base vs Chat)
-const calculateDetailedStats = () => {
-    if (typeof SillyTavern === 'undefined') return { baseRaw: 0, chatRaw: 0, chatReal: 0, totalRaw: 0, totalReal: 0, max: 0 };
+// คำนวณภาพรวม
+const calculateStats = () => {
+    if (typeof SillyTavern === 'undefined') return { chatRaw: 0, chatReal: 0, totalRaw: 0, totalReal: 0 };
     
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
-    const maxTokens = context.max_context || 8192; 
+    const maxTokens = context.max_context || 8192;
     
-    // --- 1. คำนวณ Base (System + Card) ---
-    // ส่วนนี้คือ "ค่าหัวคิว" ที่ลบไม่ได้
-    let baseRaw = 0;
-    
-    // ดึงข้อมูลการ์ด
-    if (context.characterId && SillyTavern.characters && SillyTavern.characters[context.characterId]) {
-        const char = SillyTavern.characters[context.characterId];
-        const charText = (char.description || "") + (char.personality || "") + (char.scenario || "") + (char.first_mes || "");
-        baseRaw += estimateTokens(charText);
-    }
-    
-    // บวกค่า System Prompt โดยประมาณ (User ไม่ค่อยเห็นแต่มันมีอยู่)
-    // ปกติ System Prompt จะประมาณ 300-800 Tokens แล้วแต่ Preset
-    baseRaw += 600; 
-
-    // --- 2. คำนวณ Chat (เฉพาะข้อความ) ---
-    let chatRaw = 0;
-    let chatReal = 0;
+    let totalRaw = 0;
+    let totalReal = 0;
     let rememberedCount = 0;
-    
-    // เริ่มนับจาก Base ขึ้นมา
-    let currentRealTotal = baseRaw;
-    let currentRawTotal = baseRaw;
+    let currentTokens = config.baseOffset; 
 
     for (let i = chat.length - 1; i >= 0; i--) {
         const msg = chat[i];
         
-        // Raw (รวม HTML)
+        // Raw
         const rawTok = estimateTokens(msg.mes) + 5;
-        
-        // Real (ตัด HTML)
+        totalRaw += rawTok;
+
+        // Real
         let content = msg.mes;
         if (content.includes('<') && content.includes('>')) {
             const clean = stripHtmlToText(content);
             content = `[System Content:\n${clean}]`;
         }
         const realTok = estimateTokens(content) + 5;
+        totalReal += realTok;
 
-        // เช็คโควต้า (ตัดจบเมื่อ Real เต็ม)
-        if (currentRealTotal + realTok < maxTokens) {
-            chatRaw += rawTok;
-            chatReal += realTok;
-            
-            currentRawTotal += rawTok;
-            currentRealTotal += realTok;
+        if (currentTokens + realTok < maxTokens) {
+            currentTokens += realTok;
             rememberedCount++;
-        } else {
-            break;
         }
     }
 
     return {
-        base: baseRaw,        // โทเคนพื้นฐาน (Card+System)
-        chatRaw: chatRaw,     // แชทแบบดิบ
-        chatReal: chatReal,   // แชทแบบตัดโค้ด
-        totalRaw: currentRawTotal, // ยอดรวมดิบ (เอาไว้เทียบ Silly)
-        totalReal: currentRealTotal, // ยอดรวมจริง (ส่งจริง)
+        chatRaw: totalRaw,
+        chatReal: totalReal,
+        totalRaw: totalRaw + config.baseOffset,
+        totalReal: totalReal + config.baseOffset,
         max: maxTokens,
         count: rememberedCount
     };
@@ -106,53 +83,43 @@ const injectStyles = () => {
     const style = document.createElement('style');
     style.innerHTML = `
         #chronos-orb {
-            position: fixed; top: 150px; right: 20px;
-            width: 35px; height: 35px;
-            background: rgba(10, 0, 15, 0.9);
-            border: 2px solid #D500F9; border-radius: 50%;
-            z-index: 999999; cursor: pointer;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 18px; color: #E040FB;
-            box-shadow: 0 0 15px rgba(213, 0, 249, 0.6);
-            user-select: none; touch-action: none;
-            animation: spin-slow 4s linear infinite;
+            position: fixed; top: 150px; right: 20px; width: 35px; height: 35px;
+            background: rgba(10, 0, 15, 0.9); border: 2px solid #D500F9; border-radius: 50%;
+            z-index: 999999; cursor: pointer; display: flex; align-items: center; justify-content: center;
+            font-size: 18px; color: #E040FB; box-shadow: 0 0 15px rgba(213, 0, 249, 0.6);
+            user-select: none; animation: spin-slow 4s linear infinite;
         }
         #chronos-orb:hover { border-color: #00E676; color: #00E676; box-shadow: 0 0 25px #00E676; }
         @keyframes spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 
         #chronos-inspector {
-            position: fixed; top: 100px; right: 70px; width: 320px; 
+            position: fixed; top: 80px; right: 70px; width: 340px; 
             background: rgba(15, 0, 20, 0.98); border: 2px solid #D500F9;
             color: #E1BEE7; font-family: 'Consolas', monospace; font-size: 11px;
             display: none; z-index: 999999; border-radius: 12px;
-            box-shadow: 0 10px 50px #000; overflow: hidden;
-            backdrop-filter: blur(5px);
+            box-shadow: 0 10px 50px #000; backdrop-filter: blur(5px);
         }
-        .ins-header { 
-            background: linear-gradient(90deg, #330044, #5c007a); 
-            color: #fff; padding: 8px 10px; font-weight: bold; 
-            border-bottom: 1px solid #D500F9; display: flex; justify-content: space-between;
-        }
-        .control-zone {
-            display: flex; gap: 10px; padding: 5px 10px; background: #220033;
-            border-bottom: 1px solid #550077; font-size: 10px; color: #00E676;
-        }
-        .calib-zone { background: #111; padding: 10px; border-bottom: 1px solid #333; }
-        .calib-row { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
+        .ins-header { background: linear-gradient(90deg, #330044, #5c007a); color: #fff; padding: 8px 10px; font-weight: bold; border-bottom: 1px solid #D500F9; display: flex; justify-content: space-between; }
+        .control-zone { display: flex; gap: 10px; padding: 5px 10px; background: #220033; border-bottom: 1px solid #550077; font-size: 10px; color: #00E676; }
+        
+        /* Sandbox Zone */
+        .sandbox-zone { background: #1a1a1a; padding: 10px; border-bottom: 1px solid #333; }
+        .sandbox-area { width: 95%; height: 60px; background: #000; border: 1px solid #555; color: #ccc; font-size: 10px; padding: 5px; resize: none; }
+        
+        .calib-row { display: flex; align-items: center; justify-content: space-between; margin-top: 5px; }
         .calib-input { background: #000; border: 1px solid #555; color: #fff; width: 50px; text-align: center; }
         
         .dashboard-zone { background: #000; padding: 10px; border-bottom: 1px solid #333; }
         .dash-row { display: flex; justify-content: space-between; margin-bottom: 4px; }
-        .sub-row { display: flex; justify-content: space-between; margin-bottom: 2px; padding-left: 10px; color: #777; font-size: 10px; }
         
         .ins-body { padding: 10px; }
         .search-row { display: flex; gap: 5px; margin-bottom: 10px; }
         .search-input { background: #222; border: 1px solid #D500F9; color: #fff; padding: 3px; width: 50px; border-radius: 3px; }
         .search-btn { background: #D500F9; color: #000; border: none; padding: 3px 8px; cursor: pointer; border-radius: 3px; font-weight:bold;}
-        .msg-list { max-height: 100px; overflow-y: auto; border: 1px solid #333; margin-bottom: 10px; background: #111; }
+        .msg-list { max-height: 80px; overflow-y: auto; border: 1px solid #333; margin-bottom: 10px; background: #111; }
         .msg-item { padding: 5px; cursor: pointer; border-bottom: 1px solid #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #aaa; }
         .msg-item:hover { background: #330044; color: #fff; }
-        .view-area { background: #000; color: #00E676; padding: 8px; height: 120px; overflow-y: auto; font-size: 10px; white-space: pre-wrap; border: 1px solid #5c007a; border-radius: 4px; }
+        .view-area { background: #000; color: #00E676; padding: 8px; height: 100px; overflow-y: auto; font-size: 10px; white-space: pre-wrap; border: 1px solid #5c007a; border-radius: 4px; }
         .stat-badge { display: flex; justify-content: space-between; margin-top: 5px; background: #222; padding: 5px; border-radius: 4px; }
     `;
     document.head.appendChild(style);
@@ -161,35 +128,24 @@ const injectStyles = () => {
 let dragConfig = { orbUnlocked: false, panelUnlocked: false };
 
 const createUI = () => {
-    const old = document.getElementById('chronos-orb');
-    if (old) old.remove();
-    const oldPanel = document.getElementById('chronos-inspector');
-    if (oldPanel) oldPanel.remove();
-
-    const orb = document.createElement('div');
-    orb.id = 'chronos-orb';
-    orb.innerHTML = '🌀';
+    const old = document.getElementById('chronos-orb'); if (old) old.remove();
+    const oldPanel = document.getElementById('chronos-inspector'); if (oldPanel) oldPanel.remove();
+    const orb = document.createElement('div'); orb.id = 'chronos-orb'; orb.innerHTML = '🌀';
+    const ins = document.createElement('div'); ins.id = 'chronos-inspector';
+    document.body.appendChild(orb); document.body.appendChild(ins);
     
-    const ins = document.createElement('div');
-    ins.id = 'chronos-inspector';
-    
-    document.body.appendChild(orb);
-    document.body.appendChild(ins);
-
     orb.onclick = (e) => {
         if (orb.getAttribute('data-dragging') === 'true') return;
         ins.style.display = (ins.style.display === 'none') ? 'block' : 'none';
         if (ins.style.display === 'block') renderInspector();
     };
-
-    makeDraggable(orb, 'orb');
-    makeDraggable(ins, 'panel');
+    makeDraggable(orb, 'orb'); makeDraggable(ins, 'panel');
 };
 
 const renderInspector = () => {
     const ins = document.getElementById('chronos-inspector');
     const chat = SillyTavern.getContext().chat || [];
-    const stats = calculateDetailedStats();
+    const stats = calculateStats();
 
     let listHtml = chat.slice(-5).reverse().map((msg, i) => {
         const actualIdx = chat.length - 1 - i;
@@ -199,7 +155,7 @@ const renderInspector = () => {
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🧱 BASE SPLITTER V28</span>
+            <span>🏜️ SANDBOX CALIBRATOR V30</span>
             <span style="cursor:pointer;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -208,36 +164,29 @@ const renderInspector = () => {
             <label style="display:flex;gap:5px;cursor:pointer;"><input type="checkbox" onchange="toggleDrag('panel', this.checked)" ${dragConfig.panelUnlocked ? 'checked' : ''}>🔓Win</label>
         </div>
 
-        <div class="calib-zone">
-            <div style="color:#E040FB; margin-bottom:5px;">Divisor:</div>
+        <div class="sandbox-zone">
+            <div style="color:#E040FB; margin-bottom:3px;">1. วางข้อความทดสอบที่นี่:</div>
+            <textarea id="sandbox-text" class="sandbox-area" placeholder="วางข้อความที่รู้จำนวน Token แล้วที่นี่..." oninput="updateSandbox()"></textarea>
+            
+            <div style="color:#E040FB; margin-top:5px;">2. ปรับตัวเลขจนกว่าจะตรงเป้า:</div>
             <div class="calib-row">
-                <span>🇹🇭TH (1.3):</span> <input type="number" step="0.1" value="${calibration.thaiDivisor}" class="calib-input" onchange="updateCalib('thai', this.value)">
-                <span>🇺🇸EN (3.5):</span> <input type="number" step="0.1" value="${calibration.engDivisor}" class="calib-input" onchange="updateCalib('eng', this.value)">
+                <span>🇹🇭 หารไทย (1.65):</span>
+                <input type="number" step="0.01" value="${config.thaiDivisor}" class="calib-input" onchange="updateConfig('thai', this.value); updateSandbox();">
             </div>
-            <button onclick="renderInspector()" style="width:100%; margin-top:5px; background:#333; color:#fff; border:none; cursor:pointer;">🔄 Refresh</button>
+            
+            <div style="margin-top:5px; padding:5px; background:#222; border-radius:4px; text-align:center;">
+                Sandbox Calculated: <b id="sandbox-result" style="color:#FF9800; font-size:14px;">0</b> Tokens
+            </div>
         </div>
 
         <div class="dashboard-zone">
-            <div class="dash-row" style="border-bottom:1px solid #333; padding-bottom:5px; margin-bottom:5px;">
-                <span style="color:#FF9800;">🟠 Total Raw:</span>
-                <b style="color:#FF9800;">${stats.totalRaw} Tok</b>
+            <div class="dash-row">
+                <span style="color:#FF9800;">🟠 Total Raw (Silly):</span>
+                <b style="color:#FF9800;">${stats.totalRaw}</b>
             </div>
-            
-            <div class="sub-row">
-                <span>🧱 Base (System+Card):</span>
-                <span>${stats.base}</span>
-            </div>
-            <div class="sub-row">
-                <span>💬 Chat History:</span>
-                <span>${stats.chatRaw}</span>
-            </div>
-
-            <div class="dash-row" style="margin-top:10px; border-top:1px solid #555; padding-top:5px;">
-                <span style="color:#00E676;">🟢 Total Real:</span>
+            <div class="dash-row" style="border-top:1px solid #333; margin-top:5px; padding-top:5px;">
+                <span style="color:#00E676;">🟢 Total Real (Sent):</span>
                 <b style="color:#00E676;">${stats.totalReal} / ${stats.max}</b>
-            </div>
-            <div class="sub-row">
-                <span style="color:#00E676;">(Chat Real: ${stats.chatReal})</span>
             </div>
         </div>
 
@@ -252,11 +201,19 @@ const renderInspector = () => {
     `;
 };
 
-window.updateCalib = (type, value) => {
+// ฟังก์ชันคำนวณสดใน Sandbox
+window.updateSandbox = () => {
+    const text = document.getElementById('sandbox-text').value;
+    const tokens = estimateTokens(text); // คำนวณโดยใช้ค่า Config ปัจจุบัน
+    document.getElementById('sandbox-result').innerText = tokens;
+};
+
+window.updateConfig = (type, value) => {
     const val = parseFloat(value);
     if (val > 0) {
-        if (type === 'thai') calibration.thaiDivisor = val;
-        if (type === 'eng') calibration.engDivisor = val;
+        if (type === 'thai') config.thaiDivisor = val;
+        if (type === 'eng') config.engDivisor = val;
+        // ไม่ต้อง render ใหม่ทั้งหมด แค่อัปเดตตัวเลข sandbox
     }
 };
 
@@ -336,5 +293,5 @@ setTimeout(createUI, 1500);
 if (typeof SillyTavern !== 'undefined') {
     SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
     SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
-            }
-        
+}
+
