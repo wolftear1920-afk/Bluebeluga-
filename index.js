@@ -1,10 +1,11 @@
-// index.js - Chronos V67 (Save & Range Edition) 🌌
-// Update Log:
-// - Memory Status -> Total Tokens Saved (Accumulated)
-// - Load Display -> Context Range (Start Index -> Latest Index)
-// - Chat Clean -> Total Message Count
+// index.js - Chronos V66.6 (Icons & Labels Update) 🌌📊
+// UI: Neon V47 (Strictly Preserved)
+// Logic Update:
+// 1. Memory Status -> Total Tokens Saved (Raw - Clean)
+// 2. Lord/Load -> Message Context Range (#Start -> #End)
+// 3. Chat Clean Label -> Total Message Count
 
-const extensionName = "Chronos_V67_SaveRange";
+const extensionName = "Chronos_V66_6_Labels";
 
 // =================================================================
 // 1. GLOBAL STATE
@@ -55,116 +56,93 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 3. CALCULATOR (New Logic)
+// 3. CALCULATOR (New Logic: Savings & Range)
 // =================================================================
 const calculateStats = () => {
-    if (typeof SillyTavern === 'undefined') return { savedTokens: 0, contextRange: "Wait...", totalMsgs: 0, percent: 0 };
+    if (typeof SillyTavern === 'undefined') return { 
+        savedTokens: 0, 
+        rangeLabel: "Syncing...", 
+        max: 0, 
+        totalMsgs: 0 
+    };
     
     const context = SillyTavern.getContext();
     const chat = context.chat || [];
     const tokenizer = getChronosTokenizer();
-    // Helper function for counting tokens
     const quickCount = (text) => (tokenizer && typeof tokenizer.encode === 'function') ? tokenizer.encode(text).length : Math.round(text.length / 3);
 
-    // --- A. CALCULATE TOTAL SAVED TOKENS ---
+    // --- A. Calculate Savings & Prepare Clean Tokens ---
     let totalSaved = 0;
+    let messageTokensArray = []; 
+
     chat.forEach((msg) => {
         const rawMsg = msg.mes || "";
-        const rawTokens = quickCount(rawMsg);
-        
-        // ถ้ามี HTML ให้เทียบกับแบบ Clean
+        let rawCount = quickCount(rawMsg);
+        let cleanCount = 0;
+
         if (/<[^>]+>|&lt;[^&]+&gt;/.test(rawMsg)) {
-            const cleanMsg = `[System Content:\n${stripHtmlToText(rawMsg)}]`;
-            const cleanTokens = quickCount(cleanMsg);
-            if (rawTokens > cleanTokens) {
-                totalSaved += (rawTokens - cleanTokens);
+            const cleanText = stripHtmlToText(rawMsg);
+            const formattedClean = `[System Content:\n${cleanText}]`;
+            cleanCount = quickCount(formattedClean);
+            
+            // Calculate Savings
+            if (rawCount > cleanCount) {
+                totalSaved += (rawCount - cleanCount);
             }
+        } else {
+            cleanCount = rawCount;
         }
+        messageTokensArray.push(cleanCount);
     });
 
-    // --- B. CALCULATE CONTEXT RANGE (Start -> End) ---
-    // หายอด Max Context ที่แท้จริง
+    // --- B. MAX CONTEXT ---
     let maxTokens = 8192;
     if (userManualLimit > 0) {
         maxTokens = userManualLimit;
     } else {
         const isUnlocked = SillyTavern.settings?.unlock_context || SillyTavern.settings?.unlocked_context;
-        if (isUnlocked && SillyTavern.settings?.context_size > 8192) {
-            maxTokens = parseInt(SillyTavern.settings.context_size);
-        } else if (context.max_context) {
-            maxTokens = parseInt(context.max_context);
+        if (isUnlocked) {
+            if (SillyTavern.settings?.context_size > 8192) maxTokens = parseInt(SillyTavern.settings.context_size);
+            else maxTokens = 1000000;
+        } else {
+            if (SillyTavern.settings?.context_size) maxTokens = parseInt(SillyTavern.settings.context_size);
+            else if (context.max_context) maxTokens = parseInt(context.max_context);
         }
     }
 
-    // หายอด System Overhead (Persona + World Info etc) โดยประมาณ
-    // เราจะวนลูปย้อนหลังจากข้อความล่าสุด เพื่อดูว่าใส่ข้อความได้กี่อันจนกว่าจะเต็ม Max
-    let currentUsage = 0;
-    // ประมาณการ System Base (ถ้าดึงไม่ได้ให้ตีเป็น 0 ไปก่อน แล้วนับแค่ Chat)
-    // ปกติ context.tokens คือยอดรวมทั้งหมด ถ้าเราอยากรู้ว่าเริ่มจำตรงไหน ให้วนลูปย้อนกลับ
-    
-    let endIndex = chat.length - 1;
+    // --- C. CALCULATE REMEMBERED RANGE (Backwards) ---
+    let accumulated = 0;
     let startIndex = 0;
-    let accumulatedTokens = 0;
-    
-    // สมมติว่า System Prompt กินที่ไปประมาณนึง (ถ้าคำนวณเป๊ะไม่ได้ ให้เผื่อไว้)
-    // แต่เพื่อความแม่นยำในมุมมอง User: นับย้อนหลังจนกว่า Token รวมจะเกิน Max
-    
-    // เราต้องใช้ "System Overhead" ที่ ST จองไว้ก่อน
-    // วิธีที่ง่ายที่สุด: ใช้ (context.tokens - token_chat_รวม) เป็น base แต่ถ้า context.tokens ยังไม่อัปเดตอาจเพี้ยน
-    // ดังนั้นใช้วิธีนับย้อนหลังเพียวๆ เทียบกับ Max Limit เลย
-    
-    // *เทคนิค*: เราจะหาว่า System Tokens อื่นๆ กินไปเท่าไหร่ โดยเอา (Total Usage - Chat Usage ทั้งหมดที่อยู่ใน context)
-    // แต่อันนี้ซับซ้อนไปสำหรับ Client Script เล็กๆ -> ใช้วิธีวนลูปนับ Token ข้อความย้อนหลังจนเต็ม Max ดีที่สุด
-    
-    // ดึง Padding ของ System (World Info + Persona)
-    // เนื่องจากเราเข้าถึง internal prompt ไม่ได้ ให้ assume ว่า user อยากรู้ว่า "แชท" จำได้กี่ข้อความ
-    // โดยหักลบ current total usage ออกจาก chat tokens ไม่ได้ง่ายๆ
-    // -> ใช้วิธีดูว่า Total Usage ตอนนี้ เต็ม Limit หรือยัง?
-    
-    const totalCurrentLoad = context.tokens || 0;
-    const isFull = totalCurrentLoad >= maxTokens; 
+    let endIndex = chat.length - 1;
 
-    if (!isFull) {
-        // ถ้ายังไม่เต็ม แสดงว่าจำได้ตั้งแต่ข้อความแรก (หรือตามที่ User ลบไป)
-        startIndex = 0; 
-    } else {
-        // ถ้าเต็มแล้ว ต้องหาจุดตัด
-        // วนลูปจากล่างขึ้นบน
-        let tempSum = 0;
-        // เผื่อที่ให้ System Prompt ประมาณ 1000 tokens หรือคำนวณจาก (Total - ChatTokens)
-        // เพื่อความชัวร์ ให้เริ่มนับย้อนหลัง
+    if (chat.length > 0) {
         for (let i = chat.length - 1; i >= 0; i--) {
-            let msgContent = chat[i].mes;
-            // คำนวณแบบ Clean เพราะ Chronos ส่งแบบ Clean ไป
-            if (/<[^>]+>/.test(msgContent)) {
-                msgContent = `[System Content:\n${stripHtmlToText(msgContent)}]`;
+            let t = messageTokensArray[i];
+            if (accumulated + t < maxTokens) {
+                accumulated += t;
+                startIndex = i;
+            } else {
+                break; 
             }
-            const tks = quickCount(msgContent);
-            
-            if ((accumulatedTokens + tks) > maxTokens) {
-                startIndex = i + 1; // ข้อความก่อนหน้านี้คือจุดที่เกิน
-                break;
-            }
-            accumulatedTokens += tks;
-            startIndex = i; // ยังใส่ได้อยู่
         }
+    } else {
+        endIndex = 0;
     }
-    
-    const contextRange = (chat.length === 0) ? "No Chat" : `#${startIndex} ➔ #${endIndex}`;
-    const percent = maxTokens > 0 ? (totalCurrentLoad / maxTokens) : 0;
+
+    const rangeLabel = (chat.length > 0) ? `#${startIndex} ➔ #${endIndex}` : "No Data";
+    const percent = maxTokens > 0 ? (accumulated / maxTokens) : 0; 
 
     return {
         savedTokens: totalSaved,
-        contextRange: contextRange,
+        rangeLabel: rangeLabel,
+        max: maxTokens,
         totalMsgs: chat.length,
-        percent: Math.min(percent * 100, 100),
-        rawLoad: totalCurrentLoad,
-        maxLoad: maxTokens
+        currentLoad: accumulated 
     };
 };
 
 // =================================================================
-// 4. UI RENDERER (Updated Display)
+// 4. UI RENDERER (Updated Labels & Icons)
 // =================================================================
 window.updateManualLimit = (val) => {
     userManualLimit = parseInt(val);
@@ -181,6 +159,8 @@ const renderInspector = () => {
     const chat = SillyTavern.getContext().chat || [];
     const stats = calculateStats();
     
+    const percent = stats.max > 0 ? Math.min((stats.currentLoad / stats.max) * 100, 100) : 0;
+    
     let listHtml = chat.slice(-5).reverse().map((msg, i) => {
         const actualIdx = chat.length - 1 - i;
         const preview = (msg.mes || "").substring(0, 25).replace(/</g, '&lt;');
@@ -192,11 +172,11 @@ const renderInspector = () => {
 
     const fmt = (n) => n.toLocaleString();
     const inputValue = userManualLimit > 0 ? userManualLimit : '';
-    const placeholder = fmt(stats.maxLoad);
+    const placeholder = fmt(stats.max);
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V67 (Save & Range)</span>
+            <span>🚀 CHRONOS V66.6</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -207,29 +187,29 @@ const renderInspector = () => {
 
         <div class="dashboard-zone">
             <div class="dash-row" style="border-bottom: 1px dashed #333; padding-bottom: 8px; margin-bottom: 8px;">
-                <span style="color:#aaa;">💸 Tokens Saved</span>
-                <span class="dash-val" style="color:#00E676;">${fmt(stats.savedTokens)} Tks</span>
+                <span style="color:#aaa;">🔋 Tokens Saved</span>
+                <span class="dash-val" style="color:#E040FB;">${fmt(stats.savedTokens)} T</span>
             </div>
 
             <div class="dash-row" style="align-items:center;">
-                <span style="color:#fff;">👁️ Context Range</span>
+                <span style="color:#fff;">🧠 Memory</span>
                 <div style="display:flex; align-items:center; gap:5px;">
-                    <span class="dash-val" style="color:#E040FB;">${stats.contextRange}</span>
+                    <span class="dash-val" style="color:#00E676;">${stats.rangeLabel}</span>
+                    <span style="color:#555; font-size:10px;">/ Limit:</span>
                     <input type="number" 
                            value="${inputValue}" 
-                           placeholder="Max"
+                           placeholder="${placeholder}"
                            onchange="updateManualLimit(this.value)"
-                           title="Manual Max Context Limit"
-                           style="width: 50px; background: #222; border: 1px solid #444; color: #888; border-radius: 3px; font-size: 9px; padding: 2px; text-align:center;">
+                           style="width: 50px; background: #222; border: 1px solid #444; color: #fff; border-radius: 3px; font-size: 11px; padding: 2px; text-align:right;">
                 </div>
             </div>
 
             <div class="progress-container">
-                <div class="progress-bar" style="width: ${stats.percent}%"></div>
+                <div class="progress-bar" style="width: ${percent}%"></div>
             </div>
             
             <div style="text-align:right; font-size:9px; color:#aaa; margin-top:3px;">
-                Total Msgs: <span style="color:#fff;">${fmt(stats.totalMsgs)}</span>
+                📚 Total Messages: <span style="color:#fff;">${fmt(stats.totalMsgs)}</span>
             </div>
         </div>
 
@@ -248,7 +228,8 @@ const renderInspector = () => {
         </div>
     `;
 
-    if (msgListEl) msgListEl.scrollTop = prevScrollTop;
+    const newMsgListEl = ins.querySelector('.msg-list');
+    if (newMsgListEl) newMsgListEl.scrollTop = prevScrollTop;
 };
 
 // =================================================================
@@ -302,6 +283,7 @@ const injectStyles = () => {
         
         #view-target-wrapper { margin-top:10px; border-top:1px dashed #444; padding-top:10px; display:none; animation: fade-in 0.3s; }
         .view-area { background: #080808; color: #00E676; padding: 10px; height: 140px; overflow-y: auto; border: 1px solid #333; border-radius: 4px; margin-top: 5px; white-space: pre-wrap; word-wrap: break-word; }
+        .stat-badge { display: flex; justify-content: space-between; margin-top: 5px; background: #222; padding: 6px; border-radius: 4px; border: 1px solid #333; }
         
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #111; }
@@ -371,7 +353,7 @@ window.viewAIVersion = (index) => {
     if (wrapper) wrapper.style.display = 'block';
     const contentDiv = document.getElementById('view-target-content');
     if (!contentDiv) return;
-    
+    const tokenizer = getChronosTokenizer();
     let cleanText = stripHtmlToText(msg.mes);
     let aiViewText = msg.mes; 
     if (/<[^>]+>|&lt;[^&]+&gt;/.test(msg.mes)) {
@@ -409,4 +391,4 @@ const createUI = () => {
         }, 2000);
     }
 })();
-        
+                                                                                                                         
