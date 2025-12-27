@@ -1,8 +1,10 @@
-// index.js - Chronos V66.12 (Global Access Fix) 🌌🔧
+// index.js - Chronos V66.13 (Message Range Focus) 🌌🎯
 // UI: Neon V47 (Preserved)
-// Fix: Aggressive variable finding for 'max_context' and 'tokens' to fix 0/0 issue.
+// Fix: 
+// 1. Shows ONLY message range (#Start -> #End) in Memory row. NO TOKENS.
+// 2. Handles Max Context = 0 as "Unlimited" (Show all messages).
 
-const extensionName = "Chronos_V66_12_GlobalFix";
+const extensionName = "Chronos_V66_13_RangeOnly";
 
 // =================================================================
 // 1. GLOBAL STATE
@@ -11,7 +13,6 @@ let dragConfig = { orbUnlocked: false, panelUnlocked: false };
 
 const getChronosTokenizer = () => {
     try {
-        // Try global ST object first
         if (typeof SillyTavern !== 'undefined' && SillyTavern.Tokenizers) {
             const ctx = SillyTavern.getContext();
             const model = ctx?.model || SillyTavern.settings?.model;
@@ -56,22 +57,18 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 3. CALCULATOR (Aggressive Finder)
+// 3. CALCULATOR
 // =================================================================
 const calculateStats = () => {
-    // Default safe values
-    const def = { savedTokens: 0, rangeLabel: "Waiting...", max: 0, totalMsgs: 0, currentLoad: 0 };
+    const def = { savedTokens: 0, rangeLabel: "Scanning...", max: 0, totalMsgs: 0, currentLoad: 0 };
 
-    // 1. Try to get Chat Data
     let chat = [];
     let context = {};
     
-    // Attempt 1: SillyTavern Global
     if (typeof SillyTavern !== 'undefined') {
         context = SillyTavern.getContext() || {};
         chat = context.chat || [];
     }
-    // Attempt 2: Window Global (Fallback)
     if ((!chat || chat.length === 0) && typeof window.chat !== 'undefined') {
         chat = window.chat;
     }
@@ -86,7 +83,7 @@ const calculateStats = () => {
         return Math.ceil(text.length / 3);
     };
 
-    // --- A. Savings Calculation ---
+    // --- A. Savings ---
     let totalSaved = 0;
     let messageTokensArray = []; 
 
@@ -105,71 +102,25 @@ const calculateStats = () => {
         messageTokensArray.push(cleanCount);
     });
 
-    // --- B. FIND MAX CONTEXT (The Fix) ---
+    // --- B. FIND MAX CONTEXT ---
     let maxTokens = 0;
-    
-    // Priority 1: SillyTavern Context
     if (context.max_context && context.max_context > 0) maxTokens = parseInt(context.max_context);
-    
-    // Priority 2: SillyTavern Settings
-    else if (typeof SillyTavern !== 'undefined' && SillyTavern.settings?.context_size) {
-        maxTokens = parseInt(SillyTavern.settings.context_size);
-    }
-    
-    // Priority 3: Window/Global Settings (Common in some versions)
-    else if (typeof window.settings !== 'undefined' && window.settings.context_size) {
-        maxTokens = parseInt(window.settings.context_size);
-    }
-    else if (typeof window.max_context !== 'undefined') {
-        maxTokens = parseInt(window.max_context);
-    }
+    else if (typeof SillyTavern !== 'undefined' && SillyTavern.settings?.context_size) maxTokens = parseInt(SillyTavern.settings.context_size);
+    else if (typeof window.settings !== 'undefined' && window.settings.context_size) maxTokens = parseInt(window.settings.context_size);
+    else if (typeof window.max_context !== 'undefined') maxTokens = parseInt(window.max_context);
 
-    // --- C. FIND CURRENT LOAD (The Fix) ---
+    // --- C. CURRENT LOAD ---
     let currentTotalUsage = 0;
-    
-    // Priority 1: Context Tokens
     if (context.tokens && context.tokens > 0) currentTotalUsage = context.tokens;
     
-    // Priority 2: DOM scraping (More robust selector)
-    else {
-        try {
-            // Try standard ID
-            let el = document.getElementById('token_counter');
-            // Try class
-            if (!el) el = document.querySelector('.token-counter');
-            // Try mobile/sidebar specific
-            if (!el) el = document.querySelector('#token-count-total');
-            
-            if (el) {
-                const txt = el.innerText || el.textContent || "";
-                // Extract first number sequence found
-                const match = txt.match(/(\d+)[\s\/]/); 
-                if (match && match[1]) currentTotalUsage = parseInt(match[1]);
-                else if (txt.trim().match(/^\d+$/)) currentTotalUsage = parseInt(txt);
-            }
-        } catch(e) {}
-    }
+    // --- D. RANGE CALCULATION (The Logic Fix) ---
+    let rangeLabel = "Calculating...";
+    let startIndex = 0;
+    let endIndex = chat.length - 1;
 
-    // Fallback: If still 0, calculate manually from chat (Estimate) to prevent 0/0
-    if (currentTotalUsage === 0) {
-         currentTotalUsage = messageTokensArray.reduce((a, b) => a + b, 0);
-         // Add minimal padding for system prompt if unknown
-         if (currentTotalUsage > 0) currentTotalUsage += 200; 
-    }
-    
-    // Fallback for Max if still 0 (Prevent div by zero)
-    if (maxTokens === 0 && currentTotalUsage > 0) {
-        // Assume standard size if we can't find it
-        maxTokens = 8192; 
-    }
-
-    // --- D. RANGE CALCULATION ---
-    let rangeLabel = "Ready";
+    // CASE 1: Max Limit Found -> Calculate fit
     if (maxTokens > 0) {
         let accumulated = 0;
-        let startIndex = 0;
-        let endIndex = chat.length - 1;
-        
         for (let i = chat.length - 1; i >= 0; i--) {
             let t = messageTokensArray[i];
             if (accumulated + t < maxTokens) {
@@ -180,6 +131,14 @@ const calculateStats = () => {
             }
         }
         rangeLabel = `#${startIndex} ➔ #${endIndex}`;
+    } 
+    // CASE 2: No Limit (0) -> Assume All Fit
+    else {
+        // If maxTokens is 0, it likely means unlimited or not set. Show full range.
+        startIndex = 0;
+        rangeLabel = `#${startIndex} ➔ #${endIndex}`;
+        // Set maxTokens to current usage so the bar looks full/valid instead of empty
+        if (currentTotalUsage > 0) maxTokens = currentTotalUsage; 
     }
 
     return {
@@ -201,19 +160,12 @@ const renderInspector = () => {
     const msgListEl = ins.querySelector('.msg-list');
     const prevScrollTop = msgListEl ? msgListEl.scrollTop : 0;
 
-    // Get Data
-    let context = {};
     let chat = [];
-    if (typeof SillyTavern !== 'undefined') {
-        context = SillyTavern.getContext() || {};
-        chat = context.chat || [];
-    } else if (typeof window.chat !== 'undefined') {
-        chat = window.chat;
-    }
+    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
+    else if (typeof window.chat !== 'undefined') chat = window.chat;
 
     const stats = calculateStats();
-    
-    const percent = stats.max > 0 ? Math.min((stats.currentLoad / stats.max) * 100, 100) : 0;
+    const percent = stats.max > 0 ? Math.min((stats.currentLoad / stats.max) * 100, 100) : 100;
     const fmt = (n) => (n ? n.toLocaleString() : "0");
 
     let listHtml = "";
@@ -227,13 +179,11 @@ const renderInspector = () => {
                         <span style="color:#D500F9;">#${actualIdx}</span> ${roleIcon} ${preview}...
                     </div>`;
         }).join('');
-    } else {
-        listHtml = `<div style="padding:10px; color:#666;">No messages found.</div>`;
     }
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.12</span>
+            <span>🚀 CHRONOS V66.13</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -250,10 +200,7 @@ const renderInspector = () => {
 
             <div class="dash-row" style="align-items:center;">
                 <span style="color:#fff;">🧠 Memory</span>
-                <div style="display:flex; align-items:center; gap:5px;">
-                    <span class="dash-val" style="color:#00E676;">${stats.rangeLabel}</span>
-                    <span style="color:#555; font-size:10px;">(${fmt(stats.currentLoad)}/${fmt(stats.max)})</span>
-                </div>
+                <span class="dash-val" style="color:#00E676; font-size:14px;">${stats.rangeLabel}</span>
             </div>
 
             <div class="progress-container">
@@ -285,7 +232,7 @@ const renderInspector = () => {
 };
 
 // =================================================================
-// 5. STYLES (Preserved)
+// 5. STYLES
 // =================================================================
 const injectStyles = () => {
     const exist = document.getElementById('chronos-style');
@@ -450,4 +397,4 @@ const createUI = () => {
         if (ins && ins.style.display === 'block') renderInspector();
     }, 2000);
 })();
-
+        
