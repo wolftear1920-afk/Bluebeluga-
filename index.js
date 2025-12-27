@@ -1,22 +1,25 @@
-// index.js - Chronos V66.10 (Pure Mirror) 🌌📊
+// index.js - Chronos V66.11 (Stabilized & Fix) 🌌🛠️
 // UI: Neon V47 (Preserved)
-// Logic:
-// 1. Limit Input -> REMOVED completely.
-// 2. Bar/Load -> Strictly mirrors SillyTavern's Context Bar (context.tokens).
-// 3. Range (#) -> Calculated strictly against ST's Max Context.
+// Fix: Added safety checks to prevent crashes when ST data isn't ready.
+// Logic: Mirrors ST Context Bar & Range strictly.
 
-const extensionName = "Chronos_V66_10_Mirror";
+const extensionName = "Chronos_V66_11_Fix";
 
 // =================================================================
 // 1. GLOBAL STATE
 // =================================================================
 let dragConfig = { orbUnlocked: false, panelUnlocked: false };
 
+// Helper to safely get the tokenizer
 const getChronosTokenizer = () => {
     try {
+        if (typeof SillyTavern === 'undefined') return null;
         const ctx = SillyTavern.getContext();
         const model = ctx?.model || ctx?.settings?.model || SillyTavern?.settings?.model;
-        return model ? SillyTavern.Tokenizers.getTokenizerForModel(model) : null;
+        if (model && SillyTavern.Tokenizers) {
+             return SillyTavern.Tokenizers.getTokenizerForModel(model);
+        }
+        return null;
     } catch (e) { return null; }
 };
 
@@ -47,29 +50,38 @@ const optimizePayload = (data) => {
     } else if (data.body?.prompt) {
         data.body.prompt = processText(data.body.prompt);
     }
+    // Refresh UI slightly after request
     setTimeout(() => {
         const ins = document.getElementById('chronos-inspector');
         if (ins && ins.style.display === 'block') renderInspector();
-    }, 500);
+    }, 1000);
     return data;
 };
 
 // =================================================================
-// 3. CALCULATOR (Pure Mirror Logic)
+// 3. CALCULATOR (Safe Mirror Logic)
 // =================================================================
 const calculateStats = () => {
-    if (typeof SillyTavern === 'undefined') return { 
-        savedTokens: 0, 
-        rangeLabel: "Syncing...", 
-        max: 0, 
-        totalMsgs: 0,
-        currentLoad: 0 
-    };
+    // Default safe values
+    const def = { savedTokens: 0, rangeLabel: "...", max: 0, totalMsgs: 0, currentLoad: 0 };
+
+    if (typeof SillyTavern === 'undefined') return def;
     
-    const context = SillyTavern.getContext();
-    const chat = context.chat || [];
+    // Safely access context
+    const context = SillyTavern.getContext() || {};
+    const chat = context.chat || window.chat || []; // Try window.chat as fallback
+    
+    if (!chat || chat.length === 0) return def;
+
     const tokenizer = getChronosTokenizer();
-    const quickCount = (text) => (tokenizer && typeof tokenizer.encode === 'function') ? tokenizer.encode(text).length : Math.round(text.length / 3);
+    // Helper to count tokens
+    const quickCount = (text) => {
+        if (!text) return 0;
+        if (tokenizer && typeof tokenizer.encode === 'function') {
+            return tokenizer.encode(text).length;
+        }
+        return Math.ceil(text.length / 3); // Crude fallback
+    };
 
     // --- A. Savings Calculation ---
     let totalSaved = 0;
@@ -91,90 +103,93 @@ const calculateStats = () => {
         messageTokensArray.push(cleanCount);
     });
 
-    // --- B. STRICT MAX CONTEXT (From ST Only) ---
+    // --- B. MAX CONTEXT ---
     let maxTokens = 0;
     if (context.max_context) maxTokens = parseInt(context.max_context);
     else if (SillyTavern.settings?.context_size) maxTokens = parseInt(SillyTavern.settings.context_size);
 
-    // --- C. LOAD (From ST Only - The Blue Line) ---
-    // ใช้ค่า context.tokens ตรงๆ เพื่อให้ Bar ตรงกับเว็บเป๊ะๆ
+    // --- C. CURRENT LOAD (From ST) ---
     let currentTotalUsage = context.tokens || 0;
-    if (currentTotalUsage === 0 && chat.length > 0) {
-        // Fallback กรณีค่าในตัวแปรยังไม่อัปเดต ให้ลองหาจาก DOM
-        const tokenCounterEl = document.querySelector('.token-counter');
-        if (tokenCounterEl) {
-            const parts = tokenCounterEl.innerText.split('/');
-            currentTotalUsage = parseInt(parts[0].replace(/[^0-9]/g, ''));
-        }
+    
+    // Fallback: If context.tokens is 0/undefined, try to scrape DOM (Safe check)
+    if (!currentTotalUsage) {
+        try {
+            const tokenCounterEl = document.getElementById('token_counter') || document.querySelector('.token-counter');
+            if (tokenCounterEl) {
+                const txt = tokenCounterEl.innerText || "";
+                const parts = txt.split('/');
+                if (parts[0]) currentTotalUsage = parseInt(parts[0].replace(/[^0-9]/g, ''));
+            }
+        } catch(e) {}
     }
 
-    // --- D. RANGE (Calculated to fit Max) ---
-    let accumulated = 0;
-    let startIndex = 0;
-    let endIndex = chat.length - 1;
-
-    // Loop ถอยหลังจนเต็ม Max (ตามวิธีคิดของเว็บ)
-    if (chat.length > 0 && maxTokens > 0) {
-        // เราใช้วิธีนับถอยหลังโดยดูว่าข้อความไหน "ใส่แล้วยังไม่เกิน Max"
-        // แต่เนื่องจาก ST มี System Prompt + World Info ด้วย เราจึงต้องเผื่อที่
-        // วิธีที่แม่นที่สุดถ้าไม่รู้ Overhead คือดูว่า Remaining Space เหลือเท่าไหร่
+    // --- D. RANGE CALCULATION ---
+    let rangeLabel = "Calculating...";
+    
+    if (maxTokens > 0) {
+        let accumulated = 0;
+        let startIndex = 0;
+        let endIndex = chat.length - 1;
         
-        // แต่โจทย์บอก "เว็บคำนวนยังไง เอาตามนั้น"
-        // ปกติ ST จะยัดข้อความจนเต็ม Context
+        // Loop backwards to see what fits in Max Context
         for (let i = chat.length - 1; i >= 0; i--) {
             let t = messageTokensArray[i];
             if (accumulated + t < maxTokens) {
                 accumulated += t;
                 startIndex = i;
             } else {
-                break; 
+                break; // Stop when full
             }
         }
-    } else {
-        endIndex = 0;
+        rangeLabel = `#${startIndex} ➔ #${endIndex}`;
     }
-
-    const rangeLabel = (chat.length > 0) ? `#${startIndex} ➔ #${endIndex}` : "No Data";
 
     return {
         savedTokens: totalSaved,
         rangeLabel: rangeLabel,
         max: maxTokens,
         totalMsgs: chat.length,
-        currentLoad: currentTotalUsage // ค่าจริงจากเส้นเว็บ
+        currentLoad: currentTotalUsage
     };
 };
 
 // =================================================================
-// 4. UI RENDERER (Cleaned Up - No Input)
+// 4. UI RENDERER
 // =================================================================
 const renderInspector = () => {
     const ins = document.getElementById('chronos-inspector');
     if (!ins || ins.style.display === 'none') return;
 
+    // Safety check for msgList
     const msgListEl = ins.querySelector('.msg-list');
     const prevScrollTop = msgListEl ? msgListEl.scrollTop : 0;
 
-    const chat = SillyTavern.getContext().chat || [];
+    const context = (typeof SillyTavern !== 'undefined') ? SillyTavern.getContext() : {};
+    const chat = context.chat || window.chat || [];
+    
     const stats = calculateStats();
     
-    // Percent based on Real ST Load
     const percent = stats.max > 0 ? Math.min((stats.currentLoad / stats.max) * 100, 100) : 0;
-    
-    let listHtml = chat.slice(-5).reverse().map((msg, i) => {
-        const actualIdx = chat.length - 1 - i;
-        const preview = (msg.mes || "").substring(0, 25).replace(/</g, '&lt;');
-        const roleIcon = msg.is_user ? '👤' : '🤖';
-        return `<div class="msg-item" onclick="viewAIVersion(${actualIdx})">
-                    <span style="color:#D500F9;">#${actualIdx}</span> ${roleIcon} ${preview}...
-                </div>`;
-    }).join('');
+    const fmt = (n) => (n ? n.toLocaleString() : "0");
 
-    const fmt = (n) => n.toLocaleString();
+    let listHtml = "";
+    if (chat.length > 0) {
+        listHtml = chat.slice(-5).reverse().map((msg, i) => {
+            const actualIdx = chat.length - 1 - i;
+            const cleanContent = msg.mes || "";
+            const preview = cleanContent.substring(0, 25).replace(/</g, '&lt;');
+            const roleIcon = msg.is_user ? '👤' : '🤖';
+            return `<div class="msg-item" onclick="viewAIVersion(${actualIdx})">
+                        <span style="color:#D500F9;">#${actualIdx}</span> ${roleIcon} ${preview}...
+                    </div>`;
+        }).join('');
+    } else {
+        listHtml = `<div style="padding:10px; color:#666; font-style:italic;">No messages...</div>`;
+    }
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.10</span>
+            <span>🚀 CHRONOS V66.11</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -226,10 +241,15 @@ const renderInspector = () => {
 };
 
 // =================================================================
-// 5. STYLES (Neon V47 - Strictly Preserved)
+// 5. STYLES (Neon V47 - Preserved)
 // =================================================================
 const injectStyles = () => {
+    // Remove existing if any to avoid duplicates
+    const exist = document.getElementById('chronos-style');
+    if (exist) exist.remove();
+
     const style = document.createElement('style');
+    style.id = 'chronos-style';
     style.innerHTML = `
         #chronos-orb {
             position: fixed; top: 150px; right: 20px; width: 40px; height: 40px;
@@ -332,21 +352,25 @@ const makeDraggable = (elm, type) => {
 window.searchById = () => {
     const idInput = document.getElementById('chronos-search-id');
     const id = parseInt(idInput.value);
-    const chat = SillyTavern.getContext().chat || [];
+    const context = (typeof SillyTavern !== 'undefined') ? SillyTavern.getContext() : {};
+    const chat = context.chat || window.chat || [];
+    
     if (isNaN(id) || id < 0 || id >= chat.length) { alert("Invalid ID"); return; }
     viewAIVersion(id);
 };
 
 window.viewAIVersion = (index) => {
-    const context = SillyTavern.getContext(); 
-    const chat = context.chat || [];
+    const context = (typeof SillyTavern !== 'undefined') ? SillyTavern.getContext() : {};
+    const chat = context.chat || window.chat || [];
+    
     const msg = chat[index];
     if (!msg) return;
+    
     const wrapper = document.getElementById('view-target-wrapper');
     if (wrapper) wrapper.style.display = 'block';
     const contentDiv = document.getElementById('view-target-content');
     if (!contentDiv) return;
-    const tokenizer = getChronosTokenizer();
+    
     let cleanText = stripHtmlToText(msg.mes);
     let aiViewText = msg.mes; 
     if (/<[^>]+>|&lt;[^&]+&gt;/.test(msg.mes)) {
@@ -375,13 +399,17 @@ const createUI = () => {
 (function() {
     injectStyles();
     setTimeout(createUI, 2000); 
-    if (typeof SillyTavern !== 'undefined') {
+    
+    // Register hooks safely
+    if (typeof SillyTavern !== 'undefined' && SillyTavern.extension_manager) {
         SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
-        setInterval(() => {
-            const ins = document.getElementById('chronos-inspector');
-            if (ins && ins.style.display === 'block') renderInspector();
-        }, 2000);
     }
+
+    // Loop
+    setInterval(() => {
+        const ins = document.getElementById('chronos-inspector');
+        if (ins && ins.style.display === 'block') renderInspector();
+    }, 2000);
 })();
-        
+                 
