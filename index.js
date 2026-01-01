@@ -1,25 +1,30 @@
-// index.js - Chronos V66.16 (Stateful UI) 🌌🧠
+// index.js - Chronos V66.17 (Zero Lag / Soft Update) 🌌🧊
 // UI: Neon V47 (Preserved)
-// Fix 1: Message viewer persists after refresh (State management).
-// Fix 2: Numpad is collapsible (Hidden by default).
+// Fix: 
+// 1. Removes innerHTML spam. Uses DOM text updates for 0% lag.
+// 2. Only re-renders lists/numpad if state actually changes.
 
-const extensionName = "Chronos_V66_16_Stateful";
+const extensionName = "Chronos_V66_17_Smooth";
 
 // =================================================================
-// 1. GLOBAL STATE & CACHE
+// 1. STATE & CACHE
 // =================================================================
 let dragConfig = { orbUnlocked: false, panelUnlocked: false };
 let uiState = {
-    showNumpad: false,    // Is Numpad open?
-    viewingId: null,      // Currently inspected message ID
-    numpadValue: "ID..."  // Current value in numpad
+    showNumpad: false,
+    viewingId: null,
+    numpadValue: "ID...",
+    isPanelBuilt: false // Track if we need to build HTML
 };
 
-// Cache to reduce lag
-let cache = {
-    lastChatLen: -1,
-    lastStats: null,
-    lastContextMax: 0
+// Cache to prevent useless DOM updates
+let lastRenderData = {
+    saved: -1,
+    range: "",
+    total: -1,
+    load: -1,
+    max: -1,
+    msgCount: -1
 };
 
 const getChronosTokenizer = () => {
@@ -49,9 +54,6 @@ const stripHtmlToText = (html) => {
 // 2. HOOKS
 // =================================================================
 const optimizePayload = (data) => {
-    // Reset cache
-    cache.lastChatLen = -1; 
-    
     const processText = (text) => {
         if (text && /<[^>]+>|&lt;[^&]+&gt;/.test(text)) {
             return `[System Content:\n${stripHtmlToText(text)}]`;
@@ -63,9 +65,10 @@ const optimizePayload = (data) => {
     } else if (data.body?.prompt) {
         data.body.prompt = processText(data.body.prompt);
     }
+    // Force list refresh on new message
     setTimeout(() => {
-        const ins = document.getElementById('chronos-inspector');
-        if (ins && ins.style.display === 'block') renderInspector();
+        lastRenderData.msgCount = -1; 
+        updateUI();
     }, 1000);
     return data;
 };
@@ -82,7 +85,6 @@ const findMaxContext = (contextObj) => {
     if (max === 0 && typeof window.settings !== 'undefined' && window.settings.context_size) {
         max = parseInt(window.settings.context_size);
     }
-    // Fallback default
     if (max === 0) max = 4096; 
     return max;
 };
@@ -98,12 +100,6 @@ const calculateStats = () => {
     if (!chat || chat.length === 0) return { savedTokens: 0, rangeLabel: "Waiting...", max: 0, totalMsgs: 0, currentLoad: 0 };
 
     const maxTokens = findMaxContext(context);
-    
-    // Check Cache
-    if (chat.length === cache.lastChatLen && cache.lastStats && maxTokens === cache.lastContextMax) {
-        return cache.lastStats;
-    }
-
     const tokenizer = getChronosTokenizer();
     const quickCount = (text) => {
         if (!text) return 0;
@@ -132,7 +128,7 @@ const calculateStats = () => {
     let currentTotalUsage = context.tokens || 0;
     if (currentTotalUsage === 0) currentTotalUsage = messageTokensArray.reduce((a,b)=>a+b, 0);
 
-    let rangeLabel = "Calculating...";
+    let rangeLabel = "...";
     let startIndex = 0;
     let endIndex = chat.length - 1;
     let accumulated = 0;
@@ -148,27 +144,21 @@ const calculateStats = () => {
     }
     rangeLabel = `#${startIndex} ➔ #${endIndex}`;
 
-    const result = {
+    return {
         savedTokens: totalSaved,
         rangeLabel: rangeLabel,
         max: maxTokens,
         totalMsgs: chat.length,
         currentLoad: currentTotalUsage
     };
-
-    cache.lastChatLen = chat.length;
-    cache.lastStats = result;
-    cache.lastContextMax = maxTokens;
-
-    return result;
 };
 
 // =================================================================
-// 4. INTERACTION FUNCTIONS (Updates State)
+// 4. INTERACTION
 // =================================================================
 window.toggleNumpad = () => {
     uiState.showNumpad = !uiState.showNumpad;
-    renderInspector();
+    renderNumpadSection(); // Re-render only numpad section
 };
 
 window.numpadType = (num) => {
@@ -176,7 +166,7 @@ window.numpadType = (num) => {
     if (current === "ID...") current = "";
     if (current.length < 5) {
         uiState.numpadValue = current + num;
-        renderInspector();
+        updateNumpadDisplay();
     }
 };
 
@@ -185,7 +175,7 @@ window.numpadDel = () => {
     if (current === "ID..." || current.length === 0) return;
     uiState.numpadValue = current.slice(0, -1);
     if (uiState.numpadValue === "") uiState.numpadValue = "ID...";
-    renderInspector();
+    updateNumpadDisplay();
 };
 
 window.numpadGo = () => {
@@ -199,109 +189,35 @@ window.setViewingId = (id) => {
     let chat = [];
     if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
     else if (typeof window.chat !== 'undefined') chat = window.chat;
-
-    if (isNaN(id) || id < 0 || id >= chat.length) {
-        // Optional: blink error
-        return;
-    }
+    if (isNaN(id) || id < 0 || id >= chat.length) return;
     
     uiState.viewingId = id;
-    renderInspector(); // Trigger immediate re-render
+    renderViewerSection(); // Re-render only viewer
 };
 
 window.closeViewer = () => {
     uiState.viewingId = null;
-    renderInspector();
+    renderViewerSection();
+};
+
+window.closePanel = () => {
+    const ins = document.getElementById('chronos-inspector');
+    if (ins) ins.style.display = 'none';
 };
 
 // =================================================================
-// 5. UI RENDERER (State Based)
+// 5. CORE RENDERER (The "Soft Update" Logic)
 // =================================================================
-const renderInspector = () => {
+
+// A. Build the Skeleton (Runs Once)
+const buildBaseUI = () => {
     const ins = document.getElementById('chronos-inspector');
-    if (!ins || ins.style.display === 'none') return;
-
-    // Get Data
-    let chat = [];
-    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
-    else if (typeof window.chat !== 'undefined') chat = window.chat;
-
-    const stats = calculateStats();
-    let percent = 0;
-    if (stats.max > 0) percent = Math.min((stats.currentLoad / stats.max) * 100, 100);
-    const fmt = (n) => (n ? n.toLocaleString() : "0");
-
-    // --- HTML CONSTRUCTION ---
+    if (!ins) return;
     
-    // 1. Message List
-    let listHtml = "";
-    if (chat && chat.length > 0) {
-        listHtml = chat.slice(-5).reverse().map((msg, i) => {
-            const actualIdx = chat.length - 1 - i;
-            const cleanContent = msg.mes || "";
-            const preview = cleanContent.substring(0, 20).replace(/</g, '&lt;');
-            const roleIcon = msg.is_user ? '👤' : '🤖';
-            // Note: calling setViewingId instead of direct DOM manipulation
-            return `<div class="msg-item" onclick="setViewingId(${actualIdx})">
-                        <span style="color:#D500F9;">#${actualIdx}</span> ${roleIcon} ${preview}...
-                    </div>`;
-        }).join('');
-    }
-
-    // 2. Numpad HTML (Conditional)
-    let numpadHtml = "";
-    if (uiState.showNumpad) {
-        const displayColor = uiState.numpadValue === "ID..." ? "#666" : "#fff";
-        numpadHtml = `
-            <div class="numpad-wrapper">
-                <div class="numpad-display" style="color:${displayColor}">${uiState.numpadValue}</div>
-                <div class="numpad-grid">
-                    <button class="num-btn" onclick="numpadType(1)">1</button>
-                    <button class="num-btn" onclick="numpadType(2)">2</button>
-                    <button class="num-btn" onclick="numpadType(3)">3</button>
-                    <button class="num-btn del-btn" onclick="numpadDel()">⌫</button>
-                    <button class="num-btn" onclick="numpadType(4)">4</button>
-                    <button class="num-btn" onclick="numpadType(5)">5</button>
-                    <button class="num-btn" onclick="numpadType(6)">6</button>
-                    <button class="num-btn go-btn" onclick="numpadGo()">GO</button>
-                    <button class="num-btn" onclick="numpadType(7)">7</button>
-                    <button class="num-btn" onclick="numpadType(8)">8</button>
-                    <button class="num-btn" onclick="numpadType(9)">9</button>
-                    <button class="num-btn" onclick="numpadType(0)">0</button>
-                </div>
-            </div>
-        `;
-    }
-
-    // 3. View Content HTML (Conditional Persistence)
-    let viewerHtml = "";
-    if (uiState.viewingId !== null) {
-        const msg = chat[uiState.viewingId];
-        if (msg) {
-            let cleanText = stripHtmlToText(msg.mes);
-            let aiViewText = msg.mes; 
-            if (/<[^>]+>|&lt;[^&]+&gt;/.test(msg.mes)) {
-                aiViewText = `[System Content:\n${cleanText}]`;
-            }
-            viewerHtml = `
-                <div class="viewer-container">
-                    <div class="viewer-header">
-                        <span style="color:#D500F9;">#${uiState.viewingId} Content</span>
-                        <button class="close-btn" onclick="closeViewer()">CLOSE</button>
-                    </div>
-                    <div class="view-area">${aiViewText.replace(/</g, '&lt;')}</div>
-                </div>
-            `;
-        }
-    }
-
-    // --- RENDER ---
-    const scrollPos = ins.querySelector('.ins-body') ? ins.querySelector('.ins-body').scrollTop : 0;
-
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.16</span>
-            <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
+            <span>🚀 CHRONOS V66.17</span>
+            <span style="cursor:pointer; color:#ff4081;" onclick="closePanel()">✖</span>
         </div>
         
         <div class="control-zone">
@@ -312,38 +228,168 @@ const renderInspector = () => {
         <div class="dashboard-zone">
             <div class="dash-row" style="border-bottom: 1px dashed #333; padding-bottom: 8px; margin-bottom: 8px;">
                 <span style="color:#aaa;">🔋 Tokens Saved</span>
-                <span class="dash-val" style="color:#E040FB;">${fmt(stats.savedTokens)} T</span>
+                <span class="dash-val" style="color:#E040FB;" id="disp-saved">0 T</span>
             </div>
 
             <div class="dash-row" style="align-items:center;">
                 <span style="color:#fff;">🧠 Memory</span>
-                <span class="dash-val" style="color:#00E676; font-size:14px;">${stats.rangeLabel}</span>
+                <span class="dash-val" style="color:#00E676; font-size:14px;" id="disp-range">...</span>
             </div>
 
             <div class="progress-container">
-                <div class="progress-bar" style="width: ${percent}%"></div>
+                <div class="progress-bar" id="disp-bar" style="width: 0%"></div>
             </div>
             
             <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:5px;">
-                <button class="toggle-numpad-btn" onclick="toggleNumpad()">
-                    ${uiState.showNumpad ? '🔽 Hide Keypad' : '🔢 ID Search'}
-                </button>
-                <div style="font-size:9px; color:#aaa;">📚 Total: <span style="color:#fff;">${fmt(stats.totalMsgs)}</span></div>
+                <button class="toggle-numpad-btn" id="btn-toggle-numpad" onclick="toggleNumpad()">🔢 ID Search</button>
+                <div style="font-size:9px; color:#aaa;">📚 Total: <span style="color:#fff;" id="disp-total">0</span></div>
             </div>
         </div>
 
         <div class="ins-body">
-            ${numpadHtml}
-            ${viewerHtml}
+            <div id="section-numpad"></div>
+            <div id="section-viewer"></div>
             
             <div style="font-size:9px; color:#666; margin-bottom:4px; text-transform:uppercase; margin-top:5px;">Recent Messages</div>
-            <div class="msg-list">${listHtml}</div>
+            <div class="msg-list" id="section-list"></div>
         </div>
     `;
+    uiState.isPanelBuilt = true;
+};
 
-    // Restore scroll if needed (though layout changes might make this jumpy, it's better than reset)
-    // const bodyEl = ins.querySelector('.ins-body');
-    // if(bodyEl) bodyEl.scrollTop = scrollPos;
+// B. Update Numbers Only (Runs Loop)
+const updateUI = () => {
+    const ins = document.getElementById('chronos-inspector');
+    if (!ins || ins.style.display === 'none') return;
+
+    // 1. Build structure if missing
+    if (!uiState.isPanelBuilt || ins.innerHTML === "") {
+        buildBaseUI();
+    }
+
+    const stats = calculateStats();
+    const fmt = (n) => (n ? n.toLocaleString() : "0");
+
+    // 2. Soft Update Text Nodes (Zero Lag)
+    if (stats.savedTokens !== lastRenderData.saved) {
+        document.getElementById('disp-saved').innerText = `${fmt(stats.savedTokens)} T`;
+        lastRenderData.saved = stats.savedTokens;
+    }
+    if (stats.rangeLabel !== lastRenderData.range) {
+        document.getElementById('disp-range').innerText = stats.rangeLabel;
+        lastRenderData.range = stats.rangeLabel;
+    }
+    if (stats.totalMsgs !== lastRenderData.total) {
+        document.getElementById('disp-total').innerText = fmt(stats.totalMsgs);
+        lastRenderData.total = stats.totalMsgs;
+    }
+    
+    // Bar Update
+    let percent = stats.max > 0 ? Math.min((stats.currentLoad / stats.max) * 100, 100) : 0;
+    if (Math.abs(percent - lastRenderData.load) > 0.5) { // Only update if significant change
+        document.getElementById('disp-bar').style.width = `${percent}%`;
+        lastRenderData.load = percent;
+    }
+
+    // 3. Update Sections if needed
+    if (stats.totalMsgs !== lastRenderData.msgCount) {
+        renderListSection();
+        lastRenderData.msgCount = stats.totalMsgs;
+    }
+
+    // Ensure stateful sections are rendered (first run check)
+    if (document.getElementById('section-numpad').innerHTML === "" && uiState.showNumpad) renderNumpadSection();
+};
+
+const renderNumpadSection = () => {
+    const container = document.getElementById('section-numpad');
+    const btn = document.getElementById('btn-toggle-numpad');
+    if (btn) btn.innerText = uiState.showNumpad ? '🔽 Hide Keypad' : '🔢 ID Search';
+    
+    if (!uiState.showNumpad) {
+        container.innerHTML = "";
+        return;
+    }
+    
+    const displayColor = uiState.numpadValue === "ID..." ? "#666" : "#fff";
+    container.innerHTML = `
+        <div class="numpad-wrapper">
+            <div class="numpad-display" id="numpad-screen" style="color:${displayColor}">${uiState.numpadValue}</div>
+            <div class="numpad-grid">
+                <button class="num-btn" onclick="numpadType(1)">1</button>
+                <button class="num-btn" onclick="numpadType(2)">2</button>
+                <button class="num-btn" onclick="numpadType(3)">3</button>
+                <button class="num-btn del-btn" onclick="numpadDel()">⌫</button>
+                <button class="num-btn" onclick="numpadType(4)">4</button>
+                <button class="num-btn" onclick="numpadType(5)">5</button>
+                <button class="num-btn" onclick="numpadType(6)">6</button>
+                <button class="num-btn go-btn" onclick="numpadGo()">GO</button>
+                <button class="num-btn" onclick="numpadType(7)">7</button>
+                <button class="num-btn" onclick="numpadType(8)">8</button>
+                <button class="num-btn" onclick="numpadType(9)">9</button>
+                <button class="num-btn" onclick="numpadType(0)">0</button>
+            </div>
+        </div>
+    `;
+};
+
+const updateNumpadDisplay = () => {
+    const el = document.getElementById('numpad-screen');
+    if (el) {
+        el.innerText = uiState.numpadValue;
+        el.style.color = uiState.numpadValue === "ID..." ? "#666" : "#fff";
+    }
+};
+
+const renderViewerSection = () => {
+    const container = document.getElementById('section-viewer');
+    if (uiState.viewingId === null) {
+        container.innerHTML = "";
+        return;
+    }
+    
+    let chat = [];
+    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
+    else if (typeof window.chat !== 'undefined') chat = window.chat;
+    
+    const msg = chat[uiState.viewingId];
+    if (msg) {
+        let cleanText = stripHtmlToText(msg.mes);
+        let aiViewText = msg.mes; 
+        if (/<[^>]+>|&lt;[^&]+&gt;/.test(msg.mes)) {
+            aiViewText = `[System Content:\n${cleanText}]`;
+        }
+        container.innerHTML = `
+            <div class="viewer-container">
+                <div class="viewer-header">
+                    <span style="color:#D500F9;">#${uiState.viewingId} Content</span>
+                    <button class="close-btn" onclick="closeViewer()">CLOSE</button>
+                </div>
+                <div class="view-area">${aiViewText.replace(/</g, '&lt;')}</div>
+            </div>
+        `;
+    }
+};
+
+const renderListSection = () => {
+    const container = document.getElementById('section-list');
+    let chat = [];
+    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
+    else if (typeof window.chat !== 'undefined') chat = window.chat;
+
+    if (chat && chat.length > 0) {
+        container.innerHTML = chat.slice(-5).reverse().map((msg, i) => {
+            const actualIdx = chat.length - 1 - i;
+            const cleanContent = msg.mes || "";
+            const preview = cleanContent.substring(0, 20).replace(/</g, '&lt;');
+            const roleIcon = msg.is_user ? '👤' : '🤖';
+            return `<div class="msg-item" onclick="setViewingId(${actualIdx})">
+                        <span style="color:#D500F9;">#${actualIdx}</span> ${roleIcon} ${preview}...
+                    </div>`;
+        }).join('');
+    } else {
+        container.innerHTML = `<div style="padding:5px; color:#666; font-style:italic; font-size:10px;">No messages</div>`;
+    }
 };
 
 // =================================================================
@@ -478,7 +524,7 @@ const createUI = () => {
     orb.onclick = (e) => {
         if (orb.getAttribute('data-dragging') === 'true') return;
         ins.style.display = (ins.style.display === 'none') ? 'block' : 'none';
-        if (ins.style.display === 'block') renderInspector();
+        if (ins.style.display === 'block') updateUI();
     };
     makeDraggable(orb, 'orb'); makeDraggable(ins, 'panel');
 };
@@ -490,8 +536,9 @@ const createUI = () => {
         SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
     }
+    // Loop updates only if panel is open, and only texts
     setInterval(() => {
         const ins = document.getElementById('chronos-inspector');
-        if (ins && ins.style.display === 'block') renderInspector();
+        if (ins && ins.style.display === 'block') updateUI();
     }, 2000);
 })();
