@@ -1,11 +1,8 @@
-// index.js - Chronos V66.14 (Auto-Limit Fix) 🌌🔧
+// index.js - Chronos V66.12 (Global Access Fix) 🌌🔧
 // UI: Neon V47 (Preserved)
-// Fix: 
-// 1. Scrapes Context Limit from DOM (Slider/Input) if JS variable fails.
-// 2. Defaults to 4096 if Limit is still 0 (Prevents "Unlimited" bug).
-// 3. Shows calculated range based on this non-zero limit.
+// Fix: Aggressive variable finding for 'max_context' and 'tokens' to fix 0/0 issue.
 
-const extensionName = "Chronos_V66_14_AutoLimit";
+const extensionName = "Chronos_V66_12_GlobalFix";
 
 // =================================================================
 // 1. GLOBAL STATE
@@ -14,6 +11,7 @@ let dragConfig = { orbUnlocked: false, panelUnlocked: false };
 
 const getChronosTokenizer = () => {
     try {
+        // Try global ST object first
         if (typeof SillyTavern !== 'undefined' && SillyTavern.Tokenizers) {
             const ctx = SillyTavern.getContext();
             const model = ctx?.model || SillyTavern.settings?.model;
@@ -58,65 +56,22 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 3. HELPER: FIND MAX CONTEXT
-// =================================================================
-const findMaxContext = (contextObj) => {
-    let max = 0;
-
-    // 1. Try Standard Object Paths
-    if (contextObj.max_context && contextObj.max_context > 0) max = parseInt(contextObj.max_context);
-    else if (typeof SillyTavern !== 'undefined') {
-        if (SillyTavern.settings?.context_size) max = parseInt(SillyTavern.settings.context_size);
-        else if (SillyTavern.settings?.max_context) max = parseInt(SillyTavern.settings.max_context);
-    }
-    
-    // 2. Try Window Globals
-    if (max === 0) {
-        if (typeof window.settings !== 'undefined' && window.settings.context_size) max = parseInt(window.settings.context_size);
-        else if (typeof window.max_context !== 'undefined') max = parseInt(window.max_context);
-    }
-
-    // 3. Try DOM Scraping (The Hard Way) - Look for the slider input
-    if (max === 0) {
-        try {
-            // Common IDs/Names for Context Size slider in ST
-            const inputs = document.querySelectorAll('input[type="number"], input[type="range"]');
-            for (let input of inputs) {
-                // Heuristic check for context size input
-                const id = input.id || "";
-                const name = input.name || "";
-                if ((id.includes("context") || name.includes("context")) && (id.includes("size") || name.includes("size"))) {
-                    const val = parseInt(input.value);
-                    if (val > 512) { // Reasonable threshold
-                        max = val;
-                        break;
-                    }
-                }
-            }
-        } catch(e) {}
-    }
-
-    // 4. Fallback Default (Fixes the "Unlimited" bug)
-    if (max === 0) {
-        max = 4096; // Safe default assumption
-    }
-
-    return max;
-};
-
-// =================================================================
-// 4. CALCULATOR
+// 3. CALCULATOR (Aggressive Finder)
 // =================================================================
 const calculateStats = () => {
-    const def = { savedTokens: 0, rangeLabel: "Scanning...", max: 0, totalMsgs: 0, currentLoad: 0 };
+    // Default safe values
+    const def = { savedTokens: 0, rangeLabel: "Waiting...", max: 0, totalMsgs: 0, currentLoad: 0 };
 
+    // 1. Try to get Chat Data
     let chat = [];
     let context = {};
     
+    // Attempt 1: SillyTavern Global
     if (typeof SillyTavern !== 'undefined') {
         context = SillyTavern.getContext() || {};
         chat = context.chat || [];
     }
+    // Attempt 2: Window Global (Fallback)
     if ((!chat || chat.length === 0) && typeof window.chat !== 'undefined') {
         chat = window.chat;
     }
@@ -131,7 +86,7 @@ const calculateStats = () => {
         return Math.ceil(text.length / 3);
     };
 
-    // --- A. Savings ---
+    // --- A. Savings Calculation ---
     let totalSaved = 0;
     let messageTokensArray = []; 
 
@@ -150,36 +105,82 @@ const calculateStats = () => {
         messageTokensArray.push(cleanCount);
     });
 
-    // --- B. FIND MAX CONTEXT ---
-    let maxTokens = findMaxContext(context);
+    // --- B. FIND MAX CONTEXT (The Fix) ---
+    let maxTokens = 0;
+    
+    // Priority 1: SillyTavern Context
+    if (context.max_context && context.max_context > 0) maxTokens = parseInt(context.max_context);
+    
+    // Priority 2: SillyTavern Settings
+    else if (typeof SillyTavern !== 'undefined' && SillyTavern.settings?.context_size) {
+        maxTokens = parseInt(SillyTavern.settings.context_size);
+    }
+    
+    // Priority 3: Window/Global Settings (Common in some versions)
+    else if (typeof window.settings !== 'undefined' && window.settings.context_size) {
+        maxTokens = parseInt(window.settings.context_size);
+    }
+    else if (typeof window.max_context !== 'undefined') {
+        maxTokens = parseInt(window.max_context);
+    }
 
-    // --- C. CURRENT LOAD ---
+    // --- C. FIND CURRENT LOAD (The Fix) ---
     let currentTotalUsage = 0;
+    
+    // Priority 1: Context Tokens
     if (context.tokens && context.tokens > 0) currentTotalUsage = context.tokens;
     
-    // --- D. RANGE CALCULATION ---
-    let rangeLabel = "Calculating...";
-    let startIndex = 0;
-    let endIndex = chat.length - 1;
-
-    // Calculate how many messages fit from the end backwards
-    let accumulated = 0;
-    
-    // We need to account for System Prompt Overhead roughly if currentTotalUsage is high
-    // Or just fill the bucket `maxTokens`.
-    
-    // If usage > max, we know it's full.
-    // Loop backwards
-    for (let i = chat.length - 1; i >= 0; i--) {
-        let t = messageTokensArray[i];
-        if (accumulated + t < maxTokens) {
-            accumulated += t;
-            startIndex = i;
-        } else {
-            break; // Full
-        }
+    // Priority 2: DOM scraping (More robust selector)
+    else {
+        try {
+            // Try standard ID
+            let el = document.getElementById('token_counter');
+            // Try class
+            if (!el) el = document.querySelector('.token-counter');
+            // Try mobile/sidebar specific
+            if (!el) el = document.querySelector('#token-count-total');
+            
+            if (el) {
+                const txt = el.innerText || el.textContent || "";
+                // Extract first number sequence found
+                const match = txt.match(/(\d+)[\s\/]/); 
+                if (match && match[1]) currentTotalUsage = parseInt(match[1]);
+                else if (txt.trim().match(/^\d+$/)) currentTotalUsage = parseInt(txt);
+            }
+        } catch(e) {}
     }
-    rangeLabel = `#${startIndex} ➔ #${endIndex}`;
+
+    // Fallback: If still 0, calculate manually from chat (Estimate) to prevent 0/0
+    if (currentTotalUsage === 0) {
+         currentTotalUsage = messageTokensArray.reduce((a, b) => a + b, 0);
+         // Add minimal padding for system prompt if unknown
+         if (currentTotalUsage > 0) currentTotalUsage += 200; 
+    }
+    
+    // Fallback for Max if still 0 (Prevent div by zero)
+    if (maxTokens === 0 && currentTotalUsage > 0) {
+        // Assume standard size if we can't find it
+        maxTokens = 8192; 
+    }
+
+    // --- D. RANGE CALCULATION ---
+    let rangeLabel = "Ready";
+    if (maxTokens > 0) {
+        let accumulated = 0;
+        let startIndex = 0;
+        let endIndex = chat.length - 1;
+        
+        for (let i = chat.length - 1; i >= 0; i--) {
+            let t = messageTokensArray[i];
+            if (accumulated + t < maxTokens) {
+                accumulated += t;
+                startIndex = i;
+            } else {
+                break;
+            }
+        }
+        rangeLabel = `#${startIndex} ➔ #${endIndex}`;
+    }
 
     return {
         savedTokens: totalSaved,
@@ -191,7 +192,7 @@ const calculateStats = () => {
 };
 
 // =================================================================
-// 5. UI RENDERER
+// 4. UI RENDERER
 // =================================================================
 const renderInspector = () => {
     const ins = document.getElementById('chronos-inspector');
@@ -200,18 +201,19 @@ const renderInspector = () => {
     const msgListEl = ins.querySelector('.msg-list');
     const prevScrollTop = msgListEl ? msgListEl.scrollTop : 0;
 
+    // Get Data
+    let context = {};
     let chat = [];
-    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
-    else if (typeof window.chat !== 'undefined') chat = window.chat;
+    if (typeof SillyTavern !== 'undefined') {
+        context = SillyTavern.getContext() || {};
+        chat = context.chat || [];
+    } else if (typeof window.chat !== 'undefined') {
+        chat = window.chat;
+    }
 
     const stats = calculateStats();
     
-    // Safety for bar percentage
-    let percent = 0;
-    if (stats.max > 0) {
-        percent = Math.min((stats.currentLoad / stats.max) * 100, 100);
-    }
-    
+    const percent = stats.max > 0 ? Math.min((stats.currentLoad / stats.max) * 100, 100) : 0;
     const fmt = (n) => (n ? n.toLocaleString() : "0");
 
     let listHtml = "";
@@ -225,11 +227,13 @@ const renderInspector = () => {
                         <span style="color:#D500F9;">#${actualIdx}</span> ${roleIcon} ${preview}...
                     </div>`;
         }).join('');
+    } else {
+        listHtml = `<div style="padding:10px; color:#666;">No messages found.</div>`;
     }
 
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.14</span>
+            <span>🚀 CHRONOS V66.12</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
         </div>
         
@@ -246,7 +250,10 @@ const renderInspector = () => {
 
             <div class="dash-row" style="align-items:center;">
                 <span style="color:#fff;">🧠 Memory</span>
-                <span class="dash-val" style="color:#00E676; font-size:14px;">${stats.rangeLabel}</span>
+                <div style="display:flex; align-items:center; gap:5px;">
+                    <span class="dash-val" style="color:#00E676;">${stats.rangeLabel}</span>
+                    <span style="color:#555; font-size:10px;">(${fmt(stats.currentLoad)}/${fmt(stats.max)})</span>
+                </div>
             </div>
 
             <div class="progress-container">
@@ -278,7 +285,7 @@ const renderInspector = () => {
 };
 
 // =================================================================
-// 6. STYLES (Preserved)
+// 5. STYLES (Preserved)
 // =================================================================
 const injectStyles = () => {
     const exist = document.getElementById('chronos-style');
@@ -344,7 +351,7 @@ const injectStyles = () => {
 };
 
 // =================================================================
-// 7. UTILS & INIT
+// 6. UTILS & INIT
 // =================================================================
 window.toggleDrag = (type, isChecked) => {
     if (type === 'orb') dragConfig.orbUnlocked = isChecked;
@@ -443,4 +450,4 @@ const createUI = () => {
         if (ins && ins.style.display === 'block') renderInspector();
     }, 2000);
 })();
-        
+    
