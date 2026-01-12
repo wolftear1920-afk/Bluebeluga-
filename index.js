@@ -768,11 +768,11 @@ const renderViewerSection = () => {
     const msg = chat[uiState.viewingId];
     
     if (msg) {
-        let text = /<[^>]+>/.test(msg.mes) ? `[System Content:\n${stripHtmlToText(msg.mes)}]` : msg.mes;
+        let text = /<[^>]+>/.test(msg.mes) ? `[System Content:\n${stripHtmlToText(msg.mes)}]` : ms.mes;
         container.innerHTML = `
             <div class="viewer-container">
                 <div class="viewer-header">
-                    <span style="color:#D500F9;">#${uiState.viewingId} Content</span>
+                    <span style="color:#D500F9;">#${uiState.viewingId} Content<span>
                     <button class="close-btn" onclick="closeViewer()">CLOSE</button>
                 </div>
                 <div class="view-area">${text.replace(/</g, '&lt;')}</div>
@@ -780,7 +780,10 @@ const renderViewerSection = () => {
         `;
     }
 };
-             // index.js - Part 5: Styles & Init (Touch Fix)
+
+
+
+// index.js - Part 5: Styles & Init (Native Touch Fix)
 
 // =================================================================
 // 6. STYLES & INIT
@@ -793,33 +796,34 @@ const injectStyles = () => {
     const style = document.createElement('style');
     style.id = 'chronos-style';
     style.innerHTML = `
-        /* --- ORB --- */
+        /* --- ORB (ลูกแก้ว) --- */
         #chronos-orb {
             position: fixed;
             top: 150px;
             right: 20px;
-            width: 45px;
-            height: 45px;
+            width: 50px; /* เพิ่มขนาดให้แตะง่ายขึ้น */
+            height: 50px;
             background: radial-gradient(circle, rgba(20,0,30,0.95) 0%, rgba(0,0,0,1) 100%);
             border: 2px solid #D500F9;
             border-radius: 50%;
-            z-index: 2147483647;
+            /* Z-Index สูงกว่าหน้าต่าง 1 แต้ม เพื่อกันโดนบัง */
+            z-index: 2147483648; 
             cursor: move;
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 22px;
+            font-size: 24px;
             color: #E040FB;
             box-shadow: 0 0 15px rgba(213, 0, 249, 0.6);
             animation: spin-slow 4s linear infinite;
             
-            /* TOUCH FIX: Prevent default scroll */
+            /* CRITICAL MOBILE FIXES */
             touch-action: none !important; 
             user-select: none;
-            transition: box-shadow 0.3s ease, border-color 0.3s;
+            -webkit-user-select: none;
+            -webkit-tap-highlight-color: transparent;
         }
         
-        /* ACTIVE GLOW STATE */
         #chronos-orb.active {
             border-color: #00E676;
             color: #00E676;
@@ -845,13 +849,12 @@ const injectStyles = () => {
             font-family: 'Consolas', monospace;
             font-size: 12px;
             display: none;
-            z-index: 2147483647;
+            /* Z-Index ต่ำกว่าลูกแก้ว */
+            z-index: 2147483647; 
             border-radius: 8px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.9);
             backdrop-filter: blur(10px);
             overflow: visible;
-            
-            /* Prevent Drag Scroll */
             touch-action: none !important;
         }
 
@@ -882,7 +885,7 @@ const injectStyles = () => {
         .ins-header {
             background: linear-gradient(90deg, #4A0072, #2a0040);
             color: #fff;
-            padding: 12px;
+            padding: 15px; /* เพิ่มพื้นที่แตะหัวข้อ */
             font-weight: bold;
             display: flex;
             justify-content: space-between;
@@ -892,7 +895,6 @@ const injectStyles = () => {
             user-select: none;
         }
 
-        /* Controls */
         .control-zone {
             display: flex;
             gap: 15px;
@@ -1167,7 +1169,7 @@ const injectStyles = () => {
 };
 
 // =================================================================
-// 7. INITIALIZATION (Aggressive Mobile Touch Fix)
+// 7. INITIALIZATION (OLD SCHOOL TOUCH LOGIC - MOST STABLE)
 // =================================================================
 
 const createUI = () => {
@@ -1187,120 +1189,113 @@ const createUI = () => {
     document.body.appendChild(orb); 
     document.body.appendChild(ins);
     
-    // Toggle Logic with Active Glow
+    // Toggle Event (Separate from Drag)
+    let isDragOperation = false;
+
+    // เราใช้ Event ง่ายๆ เพื่อเปิดปิด (ทำงานตอนปล่อยนิ้ว)
     orb.addEventListener('click', (e) => {
-        // Prevent toggle if it was a drag operation
-        if (orb.getAttribute('data-dragging') === 'true') {
+        // ถ้าเพิ่งลากเสร็จ ห้ามเปิดหน้าต่าง
+        if (isDragOperation) {
+            isDragOperation = false;
             return;
         }
         
         if (ins.style.display === 'none' || ins.style.display === '') {
             ins.style.display = 'block';
-            orb.classList.add('active'); // Add Glow
+            orb.classList.add('active'); 
             updateUI();
         } else {
             ins.style.display = 'none';
-            orb.classList.remove('active'); // Remove Glow
+            orb.classList.remove('active');
         }
     });
     
-    makeDraggable(orb, 'orb'); 
-    makeDraggable(ins, 'panel');
+    // Helper to set dragging state for the click handler
+    const setDragState = (state) => {
+        isDragOperation = state;
+    };
+
+    // Apply Drag Logic
+    makeDraggable(orb, 'orb', setDragState); 
+    makeDraggable(ins, 'panel', setDragState);
 };
 
-const makeDraggable = (elm, type) => {
-    // Variables for Drag Calculation
+const makeDraggable = (elm, type, setDragStateCallback) => {
+    let offsetX = 0;
+    let offsetY = 0;
     let isDragging = false;
-    let startX = 0;
-    let startY = 0;
-    let initialLeft = 0;
-    let initialTop = 0;
 
-    // Use Pointer Events (Works for Mouse AND Touch)
-    const onPointerDown = (e) => {
-        // 1. Check if unlocked
+    // --- MOUSE EVENTS (PC) ---
+    elm.onmousedown = function(e) {
         if (type === 'orb' && !dragConfig.orbUnlocked) return;
         if (type === 'panel' && !dragConfig.panelUnlocked) return;
+        if (type === 'panel' && !e.target.classList.contains('ins-header') && !e.target.parentElement.classList.contains('ins-header')) return;
+
+        e.preventDefault();
         
-        // 2. Panel Header Check
-        if (type === 'panel') {
-            const isHeader = e.target.classList.contains('ins-header') || e.target.parentElement?.classList.contains('ins-header');
-            if (!isHeader) return;
-        }
+        // Calculate offset from the element's top-left corner
+        offsetX = e.clientX - elm.getBoundingClientRect().left;
+        offsetY = e.clientY - elm.getBoundingClientRect().top;
+        isDragging = true;
 
-        // 3. Prevent Default (Critical for Mobile to stop scrolling)
-        if (e.type === 'touchstart') {
-            // Only prevent default if we are sure we want to drag
-            // But doing it here ensures the browser knows we are handling touch
-        }
+        document.onmousemove = function(e) {
+            if (!isDragging) return;
+            elm.style.left = (e.clientX - offsetX) + "px";
+            elm.style.top = (e.clientY - offsetY) + "px";
+            if (setDragStateCallback) setDragStateCallback(true);
+        };
 
-        isDragging = false; // Reset state
-        
-        // Normalize Coordinates
-        const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
-        const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
-        
-        startX = clientX;
-        startY = clientY;
-        
-        const rect = elm.getBoundingClientRect();
-        initialLeft = rect.left;
-        initialTop = rect.top;
-
-        // Add Listeners to Document (Global tracking)
-        document.addEventListener('mousemove', onPointerMove);
-        document.addEventListener('touchmove', onPointerMove, { passive: false }); // PASSIVE FALSE IS KEY
-        document.addEventListener('mouseup', onPointerUp);
-        document.addEventListener('touchend', onPointerUp);
-    };
-
-    const onPointerMove = (e) => {
-        // Normalize Coordinates
-        const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
-        const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
-
-        const deltaX = clientX - startX;
-        const deltaY = clientY - startY;
-
-        // Threshold check (prevent accidental jitter clicks)
-        if (!isDragging && (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5)) {
-            isDragging = true;
-            elm.setAttribute('data-dragging', 'true');
-        }
-
-        if (isDragging) {
-            // STOP SCROLLING
-            if(e.cancelable) e.preventDefault(); 
-            e.stopPropagation();
-
-            elm.style.left = (initialLeft + deltaX) + 'px';
-            elm.style.top = (initialTop + deltaY) + 'px';
-            
-            // Force remove transforms to avoid conflicts
-            elm.style.transform = 'none';
-        }
-    };
-
-    const onPointerUp = () => {
-        // Cleanup listeners
-        document.removeEventListener('mousemove', onPointerMove);
-        document.removeEventListener('touchmove', onPointerMove);
-        document.removeEventListener('mouseup', onPointerUp);
-        document.removeEventListener('touchend', onPointerUp);
-
-        // Reset dragging flag after a short delay (to prevent click trigger)
-        setTimeout(() => {
+        document.onmouseup = function() {
             isDragging = false;
-            elm.setAttribute('data-dragging', 'false');
-        }, 100);
+            document.onmousemove = null;
+            document.onmouseup = null;
+            // Delay resetting drag state to prevent click trigger
+            setTimeout(() => { if (setDragStateCallback) setDragStateCallback(false); }, 100);
+        };
     };
 
-    // Attach Start Listeners
-    elm.addEventListener('mousedown', onPointerDown);
-    elm.addEventListener('touchstart', onPointerDown, { passive: false });
+    // --- TOUCH EVENTS (MOBILE - AGGRESSIVE) ---
+    elm.addEventListener('touchstart', function(e) {
+        if (type === 'orb' && !dragConfig.orbUnlocked) return;
+        if (type === 'panel' && !dragConfig.panelUnlocked) return;
+        if (type === 'panel' && !e.target.classList.contains('ins-header') && !e.target.parentElement.classList.contains('ins-header')) return;
+
+        // STOP SILLY TAVERN FROM INTERFERING
+        e.stopPropagation(); 
+        // STOP SCROLLING
+        e.preventDefault();
+
+        const touch = e.touches[0];
+        offsetX = touch.clientX - elm.getBoundingClientRect().left;
+        offsetY = touch.clientY - elm.getBoundingClientRect().top;
+        isDragging = true;
+
+    }, { passive: false }); // Important: passive: false allows preventDefault
+
+    elm.addEventListener('touchmove', function(e) {
+        if (!isDragging) return;
+        
+        // STOP SCROLLING
+        e.preventDefault();
+        e.stopPropagation();
+
+        const touch = e.touches[0];
+        // Direct assignment - fastest for mobile
+        elm.style.left = (touch.clientX - offsetX) + "px";
+        elm.style.top = (touch.clientY - offsetY) + "px";
+        
+        if (setDragStateCallback) setDragStateCallback(true);
+
+    }, { passive: false });
+
+    elm.addEventListener('touchend', function(e) {
+        isDragging = false;
+        // Delay resetting drag state
+        setTimeout(() => { if (setDragStateCallback) setDragStateCallback(false); }, 100);
+    });
 };
 
-// Start Function
+// Start Extension
 (function() {
     injectStyles();
     
@@ -1311,7 +1306,6 @@ const makeDraggable = (elm, type) => {
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
     }
     
-    // Loop
     setInterval(() => {
         const ins = document.getElementById('chronos-inspector');
         if (ins && (ins.style.display === 'block' || ins.style.display === 'flex')) {
@@ -1319,4 +1313,3 @@ const makeDraggable = (elm, type) => {
         }
     }, 2000);
 })();
-    
