@@ -1,7 +1,7 @@
-// index.js - Chronos V66.28 (Ultimate Full Expanded) 🌌
-// Part 1: Config, Prompts & Data Storage
+// index.js - Chronos V66.29 (Ultimate Full Expanded) 🌌
+// Part 1: Config, State & Storage
 
-const extensionName = "Chronos_Ultimate_V28";
+const extensionName = "Chronos_Ultimate_V29";
 
 // =================================================================
 // 0. HIDDEN PROMPTS
@@ -37,14 +37,14 @@ let uiState = {
     viewingId: null,
     numpadValue: "ID...",
     isPanelBuilt: false,
-    friendMode: false,        // สลับหน้าจอ System
-    showCharSettings: false,  // เปิดหน้าตั้งค่าตัวละคร
-    chatMode: 'group',        // 'group' หรือ 'route'
-    selectedCharId: null,     // ID ตัวละครที่เลือก
-    editingCharId: null       // ID ตัวละครที่กำลังแก้
+    friendMode: false,
+    showCharSettings: false,
+    chatMode: 'group',
+    selectedCharId: null,
+    editingCharId: null
 };
 
-// โครงสร้างข้อมูล (โหลดจาก LocalStorage)
+// Data Structure (Loaded from Storage)
 let globalData = {
     characters: [
         { 
@@ -71,7 +71,6 @@ let globalData = {
 
 let friendChatHistory = []; 
 
-// Cache เพื่อลดภาระเครื่อง
 let lastRenderData = {
     saved: -1,
     range: "",
@@ -94,7 +93,7 @@ const saveGlobalData = () => {
     localStorage.setItem('chronos_global_db_v1', JSON.stringify(globalData));
 };
 
-// Load ทันทีที่เริ่มทำงาน
+// Load immediately
 loadGlobalData();
 
 // --- Helpers ---
@@ -130,7 +129,7 @@ const stripHtmlToText = (html) => {
     return text;
 };
 
-// index.js - Part 2: Logic Core & Calculator
+// index.js - Part 2: Logic Core
 
 // =================================================================
 // 2. HOOKS
@@ -346,7 +345,6 @@ window.closePanel = () => {
         ins.style.display = 'none';
     }
     
-    // Remove glow when closed via X button
     if (orb) {
         orb.classList.remove('active'); 
     }
@@ -529,7 +527,8 @@ window.sendFriendMsg = async () => {
     
     log.scrollTop = log.scrollHeight;
 };
-    // index.js - Part 4: UI Renderer
+
+// index.js - Part 4: UI Renderer & Styles
 
 // =================================================================
 // 5. CORE RENDERER (UI GENERATION)
@@ -542,7 +541,7 @@ const buildBaseUI = () => {
     ins.innerHTML = `
         <div id="holo-tab-btn" onclick="toggleTabMode()">SYSTEM</div>
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.28</span>
+            <span>🚀 CHRONOS V66.29</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="closePanel()">✖</span>
         </div>
         
@@ -616,21 +615,17 @@ const renderFriendBody = () => {
     if (!container) return;
 
     if (uiState.showCharSettings) {
-        // --- SETTINGS UI ---
         let html = `<div style="padding:10px; color:#ddd;">`;
         html += `<div style="font-size:11px; color:#C5A059; margin-bottom:5px;">CHAT MODE</div>`;
         html += `<div style="display:flex; gap:5px; margin-bottom:15px;">`;
         
-        // Group Button
         html += `<button onclick="setChatMode('group')" class="mode-btn ${uiState.chatMode==='group'?'active':''}">👥 Group</button>`;
         
-        // Route Buttons
         globalData.characters.forEach(c => {
              html += `<button onclick="setChatMode('route', ${c.id})" class="mode-btn ${uiState.chatMode==='route' && uiState.selectedCharId===c.id ? 'active' : ''}" style="border-color:${c.color}; color:${c.color}">${c.name}</button>`;
         });
         html += `</div>`;
 
-        // Character List
         html += `<div style="font-size:11px; color:#C5A059; margin-bottom:5px;">CHARACTERS</div>`;
         globalData.characters.forEach(c => {
             html += `<div class="char-row">
@@ -639,7 +634,6 @@ const renderFriendBody = () => {
             </div>`;
         });
 
-        // Add Form
         html += `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #444;">
             <input id="new-char-name" placeholder="Name" style="width:100%; margin-bottom:5px; background:#111; color:#fff; border:1px solid #333;">
             <input id="new-char-color" type="color" style="width:100%; height:25px; margin-bottom:5px; background:#111; border:none;">
@@ -650,7 +644,6 @@ const renderFriendBody = () => {
         container.innerHTML = html;
         
     } else {
-        // --- CHAT LOG UI ---
         container.innerHTML = `<div id="friend-log" style="padding:10px; font-size:12px; color:#ccc; min-height:100%;">
             <div style="text-align:center; color:#555; margin-top:20px;">
                 <span style="color:#00E676">●</span> System Online<br>
@@ -794,11 +787,9 @@ const renderViewerSection = () => {
         `;
     }
 };
-        
-// index.js - Part 5: Styles, Drag Logic (Fixed) & Init
 
 // =================================================================
-// 6. STYLES & INIT
+// 6. STYLES (CSS)
 // =================================================================
 
 const injectStyles = () => {
@@ -813,9 +804,9 @@ const injectStyles = () => {
             position: fixed;
             top: 150px;
             right: 20px;
-            width: 40px;
-            height: 40px;
-            background: radial-gradient(circle, rgba(20,0,30,0.9) 0%, rgba(0,0,0,1) 100%);
+            width: 45px;
+            height: 45px;
+            background: radial-gradient(circle, rgba(20,0,30,0.95) 0%, rgba(0,0,0,1) 100%);
             border: 2px solid #D500F9;
             border-radius: 50%;
             z-index: 2147483647;
@@ -823,18 +814,15 @@ const injectStyles = () => {
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 20px;
+            font-size: 22px;
             color: #E040FB;
             box-shadow: 0 0 15px rgba(213, 0, 249, 0.6);
             animation: spin-slow 4s linear infinite;
-            
-            /* TOUCH FIX: Prevent default scroll */
-            touch-action: none; 
+            touch-action: none !important;
             user-select: none;
-            transition: all 0.3s ease;
+            transition: box-shadow 0.3s ease, border-color 0.3s;
         }
         
-        /* ACTIVE GLOW STATE */
         #chronos-orb.active {
             border-color: #00E676;
             color: #00E676;
@@ -865,6 +853,7 @@ const injectStyles = () => {
             box-shadow: 0 20px 60px rgba(0,0,0,0.9);
             backdrop-filter: blur(10px);
             overflow: visible;
+            touch-action: none !important;
         }
 
         #holo-tab-btn {
@@ -894,16 +883,16 @@ const injectStyles = () => {
         .ins-header {
             background: linear-gradient(90deg, #4A0072, #2a0040);
             color: #fff;
-            padding: 10px;
+            padding: 12px;
             font-weight: bold;
             display: flex;
             justify-content: space-between;
             border-bottom: 1px solid #D500F9;
-            touch-action: none;
+            cursor: move;
+            touch-action: none !important;
             user-select: none;
         }
 
-        /* Controls */
         .control-zone {
             display: flex;
             gap: 15px;
@@ -1177,8 +1166,12 @@ const injectStyles = () => {
     document.head.appendChild(style);
 };
 
+
+
+// index.js - Part 5: Initialization & Drag Logic
+
 // =================================================================
-// 7. INITIALIZATION (Fixed for Mobile Drag)
+// 7. INITIALIZATION (Aggressive Mobile Touch Fix)
 // =================================================================
 
 const createUI = () => {
@@ -1199,7 +1192,7 @@ const createUI = () => {
     document.body.appendChild(ins);
     
     // Toggle Logic with Active Glow
-    orb.onclick = (e) => {
+    orb.addEventListener('click', (e) => {
         // Prevent toggle if it was a drag operation
         if (orb.getAttribute('data-dragging') === 'true') {
             return;
@@ -1213,87 +1206,99 @@ const createUI = () => {
             ins.style.display = 'none';
             orb.classList.remove('active'); // Remove Glow
         }
-    };
+    });
     
     makeDraggable(orb, 'orb'); 
     makeDraggable(ins, 'panel');
 };
 
 const makeDraggable = (elm, type) => {
-    // Variables for calculations
+    // Variables for Drag Calculation
+    let isDragging = false;
     let startX = 0;
     let startY = 0;
     let initialLeft = 0;
     let initialTop = 0;
-    
+
+    // Use Pointer Events (Works for Mouse AND Touch)
     const onPointerDown = (e) => {
-        // Check locks
+        // 1. Check if unlocked
         if (type === 'orb' && !dragConfig.orbUnlocked) return;
         if (type === 'panel' && !dragConfig.panelUnlocked) return;
         
-        // Header check for panel
+        // 2. Panel Header Check
         if (type === 'panel') {
             const isHeader = e.target.classList.contains('ins-header') || e.target.parentElement?.classList.contains('ins-header');
             if (!isHeader) return;
         }
+
+        isDragging = false; // Reset state
         
-        // Normalize coordinates (Mouse vs Touch)
-        const evt = (e.touches && e.touches[0]) ? e.touches[0] : e;
-        startX = evt.clientX;
-        startY = evt.clientY;
+        // Normalize Coordinates
+        const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+        const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
         
-        // Get initial position relative to the viewport
+        startX = clientX;
+        startY = clientY;
+        
         const rect = elm.getBoundingClientRect();
         initialLeft = rect.left;
         initialTop = rect.top;
-        
-        // Add listeners for move/up events
-        document.addEventListener('mouseup', onPointerUp);
+
+        // Add Listeners to Document (Global tracking)
         document.addEventListener('mousemove', onPointerMove);
+        document.addEventListener('touchmove', onPointerMove, { passive: false }); // PASSIVE FALSE IS KEY
+        document.addEventListener('mouseup', onPointerUp);
         document.addEventListener('touchend', onPointerUp);
-        
-        // IMPORTANT: passive: false allows e.preventDefault() to stop scrolling
-        document.addEventListener('touchmove', onPointerMove, { passive: false });
-        
-        elm.setAttribute('data-dragging', 'true');
     };
-    
+
     const onPointerMove = (e) => {
-        // Stop default scroll behavior
-        if(e.cancelable) e.preventDefault();
-        
-        const evt = (e.touches && e.touches[0]) ? e.touches[0] : e;
-        const currentX = evt.clientX;
-        const currentY = evt.clientY;
-        
-        const deltaX = currentX - startX;
-        const deltaY = currentY - startY;
-        
-        // Apply new position
-        elm.style.left = (initialLeft + deltaX) + "px";
-        elm.style.top = (initialTop + deltaY) + "px";
-        
-        // Ensure no transform interference
-        elm.style.transform = "none";
+        // Normalize Coordinates
+        const clientX = e.clientX || (e.touches ? e.touches[0].clientX : 0);
+        const clientY = e.clientY || (e.touches ? e.touches[0].clientY : 0);
+
+        const deltaX = clientX - startX;
+        const deltaY = clientY - startY;
+
+        // Threshold check (prevent accidental jitter clicks)
+        if (!isDragging && (Math.abs(deltaX) > 5 || Math.abs(deltaY) > 5)) {
+            isDragging = true;
+            elm.setAttribute('data-dragging', 'true');
+        }
+
+        if (isDragging) {
+            // STOP SCROLLING
+            if(e.cancelable) e.preventDefault(); 
+            e.stopPropagation();
+
+            elm.style.left = (initialLeft + deltaX) + 'px';
+            elm.style.top = (initialTop + deltaY) + 'px';
+            
+            // Force remove transforms to avoid conflicts
+            elm.style.transform = 'none';
+        }
     };
-    
+
     const onPointerUp = () => {
-        document.removeEventListener('mouseup', onPointerUp);
+        // Cleanup listeners
         document.removeEventListener('mousemove', onPointerMove);
-        document.removeEventListener('touchend', onPointerUp);
         document.removeEventListener('touchmove', onPointerMove);
-        
+        document.removeEventListener('mouseup', onPointerUp);
+        document.removeEventListener('touchend', onPointerUp);
+
+        // Reset dragging flag after a short delay
         setTimeout(() => {
+            isDragging = false;
             elm.setAttribute('data-dragging', 'false');
         }, 100);
     };
-    
-    // Bind Start Events
+
+    // Attach Start Listeners
     elm.addEventListener('mousedown', onPointerDown);
     elm.addEventListener('touchstart', onPointerDown, { passive: false });
 };
 
-// Start Extension
+// Start Function
 (function() {
     injectStyles();
     
@@ -1304,7 +1309,7 @@ const makeDraggable = (elm, type) => {
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
     }
     
-    // Loop updates
+    // Loop
     setInterval(() => {
         const ins = document.getElementById('chronos-inspector');
         if (ins && (ins.style.display === 'block' || ins.style.display === 'flex')) {
@@ -1312,4 +1317,3 @@ const makeDraggable = (elm, type) => {
         }
     }, 2000);
 })();
-
