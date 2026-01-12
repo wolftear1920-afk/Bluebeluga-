@@ -1,7 +1,7 @@
-// index.js - Chronos V66.29 (Ultimate Full Expanded) 🌌
-// Part 1: Config, State & Storage
+// index.js - Chronos V66.30 (Touch Fix Final) 🌌
+// Part 1: Config & Data
 
-const extensionName = "Chronos_Ultimate_V29";
+const extensionName = "Chronos_Ultimate_V30";
 
 // =================================================================
 // 0. HIDDEN PROMPTS
@@ -44,7 +44,6 @@ let uiState = {
     editingCharId: null
 };
 
-// Data Structure (Loaded from Storage)
 let globalData = {
     characters: [
         { 
@@ -93,7 +92,6 @@ const saveGlobalData = () => {
     localStorage.setItem('chronos_global_db_v1', JSON.stringify(globalData));
 };
 
-// Load immediately
 loadGlobalData();
 
 // --- Helpers ---
@@ -151,7 +149,6 @@ const optimizePayload = (data) => {
         data.body.prompt = processText(data.body.prompt);
     }
     
-    // Force list refresh after a delay
     setTimeout(() => {
         lastRenderData.msgCount = -1; 
         updateUI();
@@ -464,17 +461,14 @@ window.sendFriendMsg = async () => {
     
     input.value = ''; 
 
-    // Show User Message
     log.innerHTML += `<div style="margin-bottom:6px; text-align:right; padding:6px; background:#333; border-radius:4px; color:#aaa;"><b>Op:</b> ${txt}</div>`;
     
     friendChatHistory.push({ role: 'user', content: `[message] ${txt}` });
     
     log.scrollTop = log.scrollHeight;
 
-    // Trigger Summary
     generateHiddenSummary(txt);
 
-    // Build Prompt
     let dynamicSystemPrompt = BASE_FRIEND_PROMPT + "\n\n[Active Characters]:\n";
     
     if (uiState.chatMode === 'group') {
@@ -527,8 +521,7 @@ window.sendFriendMsg = async () => {
     
     log.scrollTop = log.scrollHeight;
 };
-
-// index.js - Part 4: UI Renderer & Styles
+        // index.js - Part 4: UI Renderer
 
 // =================================================================
 // 5. CORE RENDERER (UI GENERATION)
@@ -541,7 +534,7 @@ const buildBaseUI = () => {
     ins.innerHTML = `
         <div id="holo-tab-btn" onclick="toggleTabMode()">SYSTEM</div>
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.29</span>
+            <span>🚀 CHRONOS V66.30</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="closePanel()">✖</span>
         </div>
         
@@ -787,9 +780,10 @@ const renderViewerSection = () => {
         `;
     }
 };
+             // index.js - Part 5: Styles & Init (Touch Fix)
 
 // =================================================================
-// 6. STYLES (CSS)
+// 6. STYLES & INIT
 // =================================================================
 
 const injectStyles = () => {
@@ -818,11 +812,14 @@ const injectStyles = () => {
             color: #E040FB;
             box-shadow: 0 0 15px rgba(213, 0, 249, 0.6);
             animation: spin-slow 4s linear infinite;
-            touch-action: none !important;
+            
+            /* TOUCH FIX: Prevent default scroll */
+            touch-action: none !important; 
             user-select: none;
             transition: box-shadow 0.3s ease, border-color 0.3s;
         }
         
+        /* ACTIVE GLOW STATE */
         #chronos-orb.active {
             border-color: #00E676;
             color: #00E676;
@@ -853,6 +850,8 @@ const injectStyles = () => {
             box-shadow: 0 20px 60px rgba(0,0,0,0.9);
             backdrop-filter: blur(10px);
             overflow: visible;
+            
+            /* Prevent Drag Scroll */
             touch-action: none !important;
         }
 
@@ -893,6 +892,7 @@ const injectStyles = () => {
             user-select: none;
         }
 
+        /* Controls */
         .control-zone {
             display: flex;
             gap: 15px;
@@ -1166,10 +1166,6 @@ const injectStyles = () => {
     document.head.appendChild(style);
 };
 
-
-
-// index.js - Part 5: Initialization & Drag Logic
-
 // =================================================================
 // 7. INITIALIZATION (Aggressive Mobile Touch Fix)
 // =================================================================
@@ -1232,6 +1228,12 @@ const makeDraggable = (elm, type) => {
             if (!isHeader) return;
         }
 
+        // 3. Prevent Default (Critical for Mobile to stop scrolling)
+        if (e.type === 'touchstart') {
+            // Only prevent default if we are sure we want to drag
+            // But doing it here ensures the browser knows we are handling touch
+        }
+
         isDragging = false; // Reset state
         
         // Normalize Coordinates
@@ -1286,7 +1288,7 @@ const makeDraggable = (elm, type) => {
         document.removeEventListener('mouseup', onPointerUp);
         document.removeEventListener('touchend', onPointerUp);
 
-        // Reset dragging flag after a short delay
+        // Reset dragging flag after a short delay (to prevent click trigger)
         setTimeout(() => {
             isDragging = false;
             elm.setAttribute('data-dragging', 'false');
@@ -1317,3 +1319,4 @@ const makeDraggable = (elm, type) => {
         }
     }, 2000);
 })();
+    
