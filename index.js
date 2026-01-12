@@ -1,11 +1,10 @@
-// index.js - Chronos V66.21 (Original Logic + Tab System) 🌌
-// UI: Neon V47 (Preserved) + Friend Overlay
-// Fix: Removes innerHTML spam. Uses DOM text updates.
+// index.js - Chronos V66.23 (Uncompressed Full Version) 🌌
+// Features: Cyberpunk Tab + Fixed Animation + Auto-Hide Controls
 
-const extensionName = "Chronos_Integrated_Full";
+const extensionName = "Chronos_Integrated_Full_V23";
 
 // =================================================================
-// 0. CONFIG (ส่วนเดียวที่เพิ่มเข้ามาในท่อนนี้)
+// 0. CONFIG & PROMPT
 // =================================================================
 // ⚠️ ใส่ Prompt แก๊งเพื่อนตรงนี้ (ห้ามลบ ` หัวท้าย)
 const FRIEND_SYSTEM_PROMPT = `
@@ -19,16 +18,20 @@ Progress Enforcement: ...
 // =================================================================
 // 1. STATE & CACHE
 // =================================================================
-let dragConfig = { orbUnlocked: false, panelUnlocked: false };
+let dragConfig = {
+    orbUnlocked: false,
+    panelUnlocked: false
+};
+
 let uiState = {
     showNumpad: false,
     viewingId: null,
     numpadValue: "ID...",
-    isPanelBuilt: false, // Track if we need to build HTML
-    friendMode: false    // <--- เพิ่มตัวแปรสำหรับโหมดเพื่อน
+    isPanelBuilt: false,
+    friendMode: false // ตัวแปรสำหรับสลับหน้าจอ System
 };
 
-let friendChatHistory = []; // เก็บประวัติแชทเพื่อน
+let friendChatHistory = []; // เก็บประวัติแชทแยก
 
 // Cache to prevent useless DOM updates
 let lastRenderData = {
@@ -48,11 +51,15 @@ const getChronosTokenizer = () => {
             return SillyTavern.Tokenizers.getTokenizerForModel(model);
         }
         return null;
-    } catch (e) { return null; }
+    } catch (e) {
+        return null;
+    }
 };
 
 const stripHtmlToText = (html) => {
-    if (!html) return "";
+    if (!html) {
+        return "";
+    }
     let text = html.replace(/<br\s*\/?>/gi, '\n')
                    .replace(/<\/p>/gi, '\n\n')
                    .replace(/<\/div>/gi, '\n')
@@ -73,11 +80,13 @@ const optimizePayload = (data) => {
         }
         return text;
     };
+    
     if (data.body?.messages) {
         data.body.messages.forEach(msg => msg.content = processText(msg.content));
     } else if (data.body?.prompt) {
         data.body.prompt = processText(data.body.prompt);
     }
+    
     // Force list refresh on new message
     setTimeout(() => {
         lastRenderData.msgCount = -1; 
@@ -91,32 +100,45 @@ const optimizePayload = (data) => {
 // =================================================================
 const findMaxContext = (contextObj) => {
     let max = 0;
-    if (contextObj.max_context && contextObj.max_context > 0) max = parseInt(contextObj.max_context);
-    else if (typeof SillyTavern !== 'undefined' && SillyTavern.settings?.context_size) {
+    if (contextObj.max_context && contextObj.max_context > 0) {
+        max = parseInt(contextObj.max_context);
+    } else if (typeof SillyTavern !== 'undefined' && SillyTavern.settings?.context_size) {
         max = parseInt(SillyTavern.settings.context_size);
     }
+    
     if (max === 0 && typeof window.settings !== 'undefined' && window.settings.context_size) {
         max = parseInt(window.settings.context_size);
     }
-    if (max === 0) max = 4096; 
+    
+    if (max === 0) {
+        max = 4096;
+    }
     return max;
 };
 
 const calculateStats = () => {
     let chat = [];
     let context = {};
+    
     if (typeof SillyTavern !== 'undefined') {
         context = SillyTavern.getContext() || {};
         chat = context.chat || [];
-    } else if (typeof window.chat !== 'undefined') chat = window.chat;
+    } else if (typeof window.chat !== 'undefined') {
+        chat = window.chat;
+    }
 
-    if (!chat || chat.length === 0) return { savedTokens: 0, rangeLabel: "Waiting...", max: 0, totalMsgs: 0, currentLoad: 0 };
+    if (!chat || chat.length === 0) {
+        return { savedTokens: 0, rangeLabel: "Waiting...", max: 0, totalMsgs: 0, currentLoad: 0 };
+    }
 
     const maxTokens = findMaxContext(context);
     const tokenizer = getChronosTokenizer();
+    
     const quickCount = (text) => {
         if (!text) return 0;
-        if (tokenizer && typeof tokenizer.encode === 'function') return tokenizer.encode(text).length;
+        if (tokenizer && typeof tokenizer.encode === 'function') {
+            return tokenizer.encode(text).length;
+        }
         return Math.ceil(text.length / 3);
     };
 
@@ -127,11 +149,14 @@ const calculateStats = () => {
         const rawMsg = msg.mes || "";
         let rawCount = quickCount(rawMsg);
         let cleanCount = 0;
+        
         if (/<[^>]+>|&lt;[^&]+&gt;/.test(rawMsg)) {
             const cleanText = stripHtmlToText(rawMsg);
             const formattedClean = `[System Content:\n${cleanText}]`;
             cleanCount = quickCount(formattedClean);
-            if (rawCount > cleanCount) totalSaved += (rawCount - cleanCount);
+            if (rawCount > cleanCount) {
+                totalSaved += (rawCount - cleanCount);
+            }
         } else {
             cleanCount = rawCount;
         }
@@ -139,7 +164,9 @@ const calculateStats = () => {
     });
 
     let currentTotalUsage = context.tokens || 0;
-    if (currentTotalUsage === 0) currentTotalUsage = messageTokensArray.reduce((a,b)=>a+b, 0);
+    if (currentTotalUsage === 0) {
+        currentTotalUsage = messageTokensArray.reduce((a,b)=>a+b, 0);
+    }
 
     let rangeLabel = "...";
     let startIndex = 0;
@@ -165,12 +192,13 @@ const calculateStats = () => {
         currentLoad: currentTotalUsage
     };
 };
+
 // =================================================================
 // 4. INTERACTION
 // =================================================================
 window.toggleNumpad = () => {
     uiState.showNumpad = !uiState.showNumpad;
-    renderNumpadSection(); // Re-render only numpad section
+    renderNumpadSection(); 
 };
 
 window.numpadType = (num) => {
@@ -201,11 +229,12 @@ window.setViewingId = (id) => {
     let chat = [];
     if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
     else if (typeof window.chat !== 'undefined') chat = window.chat;
+    
     if (isNaN(id) || id < 0 || id >= chat.length) return;
     
     uiState.viewingId = id;
-    renderViewerSection(); // Re-render only viewer
-    renderListSection();   // Re-render list to show active state
+    renderViewerSection();
+    renderListSection(); // Refresh List เพื่อให้ Animation ทำงาน
 };
 
 window.closeViewer = () => {
@@ -219,24 +248,50 @@ window.closePanel = () => {
     if (ins) ins.style.display = 'none';
 };
 
-// --- NEW SYSTEM: TAB & FRIEND CHAT ---
+// --- NEW FEATURE: TAB SWITCHING SYSTEM ---
 window.toggleTabMode = () => {
     uiState.friendMode = !uiState.friendMode;
     
-    // สลับ View
     const normalView = document.getElementById('view-normal');
     const friendView = document.getElementById('view-friend');
+    const controls = document.getElementById('panel-controls'); // ID ของส่วนควบคุม
     const tabBtn = document.getElementById('holo-tab-btn');
 
+    // 1. สลับหน้าจอ (Switch Views)
     if (normalView && friendView) {
-        normalView.style.display = uiState.friendMode ? 'none' : 'block';
-        friendView.style.display = uiState.friendMode ? 'flex' : 'none';
+        if (uiState.friendMode) {
+            normalView.style.display = 'none';
+            friendView.style.display = 'flex';
+        } else {
+            normalView.style.display = 'block';
+            friendView.style.display = 'none';
+        }
+    }
+    
+    // 2. ซ่อน/แสดงส่วนควบคุม (Hide/Show Controls)
+    if (controls) {
+        if (uiState.friendMode) {
+            controls.style.display = 'none'; // ซ่อนเมื่อเข้าหน้าแชท
+        } else {
+            controls.style.display = 'flex'; // แสดงเมื่ออยู่หน้า Stats
+        }
     }
 
-    // เปลี่ยนข้อความบนปุ่ม Tab
+    // 3. เปลี่ยนสีปุ่ม Tab (Update Button Style)
     if (tabBtn) {
         tabBtn.innerText = uiState.friendMode ? 'STATS' : 'SYSTEM';
-        tabBtn.style.color = uiState.friendMode ? '#D500F9' : '#000'; // สีม่วงตอนกลับ, สีดำตอนอยู่ System
+        
+        if (uiState.friendMode) {
+            // สี Cyberpunk Cyan ตอนเป็นปุ่มกลับ
+            tabBtn.style.color = '#00E676';
+            tabBtn.style.borderColor = '#00E676';
+            tabBtn.style.boxShadow = '0 -5px 15px rgba(0, 230, 118, 0.4)';
+        } else {
+            // สี Cyan บนพื้นดำ ตอนเป็นปุ่มเข้า System
+            tabBtn.style.color = '#00E676'; 
+            tabBtn.style.borderColor = '#00E676';
+            tabBtn.style.boxShadow = '0 -4px 10px rgba(0, 230, 118, 0.2)';
+        }
     }
 };
 
@@ -244,30 +299,30 @@ window.sendFriendMsg = async () => {
     const input = document.getElementById('friend-input');
     const log = document.getElementById('friend-log');
     const txt = input.value.trim();
+    
     if (!txt) return;
     
     input.value = ''; 
 
-    // 1. Show User Msg
+    // Show User Message
     log.innerHTML += `<div style="margin-bottom:6px; text-align:right; padding:6px; background:#333; border-radius:4px; color:#aaa;"><b>Op:</b> ${txt}</div>`;
     friendChatHistory.push({ role: 'user', content: `[message] ${txt}` });
     log.scrollTop = log.scrollHeight;
 
-    // 2. Prepare Context
+    // Prepare Context
     const context = SillyTavern.getContext();
     const lastMsg = context.chat && context.chat.length > 0 ? context.chat[context.chat.length-1] : { name: '?', mes: '' };
     const cleanMes = stripHtmlToText(lastMsg.mes);
     
-    // 3. Payload
     const payload = [
         { role: 'system', content: FRIEND_SYSTEM_PROMPT },
         ...friendChatHistory,
-        { role: 'user', content: `(Current Story Context:\n${lastMsg.name}: ${cleanMes})\n\n[message] ${txt}` }
+        { role: 'user', content: `(Story Context:\n${lastMsg.name}: ${cleanMes})\n\n[message] ${txt}` }
     ];
 
-    // 4. Send API
+    // Loading Animation
     const loadId = 'load-' + Date.now();
-    log.innerHTML += `<div id="${loadId}" style="color:#C5A059; font-size:10px; margin:5px;">System Processing...</div>`;
+    log.innerHTML += `<div id="${loadId}" style="color:#00E676; font-size:10px; margin:5px;">Connecting to System...</div>`;
     log.scrollTop = log.scrollHeight;
 
     try {
@@ -277,6 +332,7 @@ window.sendFriendMsg = async () => {
         } else {
              reply = "⚠️ API Error: Generation function not found.";
         }
+        
         document.getElementById(loadId).remove();
         friendChatHistory.push({ role: 'assistant', content: reply });
         
@@ -287,11 +343,11 @@ window.sendFriendMsg = async () => {
     }
     log.scrollTop = log.scrollHeight;
 };
+
 // =================================================================
-// 5. CORE RENDERER (Updated with Tab & Animations)
+// 5. CORE RENDERER
 // =================================================================
 
-// A. Build the Skeleton
 const buildBaseUI = () => {
     const ins = document.getElementById('chronos-inspector');
     if (!ins) return;
@@ -300,11 +356,11 @@ const buildBaseUI = () => {
         <div id="holo-tab-btn" onclick="toggleTabMode()">SYSTEM</div>
 
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.21</span>
+            <span>🚀 CHRONOS V66.23</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="closePanel()">✖</span>
         </div>
         
-        <div class="control-zone">
+        <div class="control-zone" id="panel-controls">
             <div class="switch-row">
                 <label class="neon-switch">
                     <input type="checkbox" onchange="toggleDrag('orb', this.checked)" ${dragConfig.orbUnlocked ? 'checked' : ''}>
@@ -356,19 +412,18 @@ const buildBaseUI = () => {
         <div id="view-friend" style="display: ${uiState.friendMode ? 'flex' : 'none'}; flex-direction: column; height: 380px;">
             <div id="friend-log" style="flex:1; overflow-y:auto; padding:10px; background:#1a1a1a; font-size:12px; color:#ccc;">
                 <div style="text-align:center; color:#555; margin-top:20px;">
-                    System Access Granted.<br>Connected.
+                    <span style="color:#00E676">●</span> System Online<br>Encrypted Channel.
                 </div>
             </div>
-            <div style="padding:8px; background:#222; display:flex; gap:5px; border-top:2px solid #C5A059;">
-                <input type="text" id="friend-input" style="flex:1; background:#000; border:1px solid #444; color:#fff; padding:5px; font-size:12px;" placeholder="Command / Message..." onkeydown="if(event.key==='Enter') sendFriendMsg()">
-                <button onclick="sendFriendMsg()" style="background:#C5A059; border:none; color:#000; font-weight:bold; cursor:pointer; padding:0 10px;">➤</button>
+            <div style="padding:8px; background:#222; display:flex; gap:5px; border-top:1px solid #00E676;">
+                <input type="text" id="friend-input" style="flex:1; background:#000; border:1px solid #444; color:#fff; padding:5px; font-size:12px;" placeholder="Input Command..." onkeydown="if(event.key==='Enter') sendFriendMsg()">
+                <button onclick="sendFriendMsg()" style="background:#00E676; border:none; color:#000; font-weight:bold; cursor:pointer; padding:0 10px;">➤</button>
             </div>
         </div>
     `;
     uiState.isPanelBuilt = true;
 };
 
-// B. Update Numbers
 const updateUI = () => {
     const ins = document.getElementById('chronos-inspector');
     if (!ins || ins.style.display === 'none') return;
@@ -377,7 +432,7 @@ const updateUI = () => {
         buildBaseUI();
     }
 
-    // Skip stats if in friend mode
+    // Skip stats calculation if in friend mode
     if (uiState.friendMode) return;
 
     const stats = calculateStats();
@@ -407,12 +462,43 @@ const updateUI = () => {
         lastRenderData.msgCount = stats.totalMsgs;
     }
 
-    if (document.getElementById('section-numpad').innerHTML === "" && uiState.showNumpad) renderNumpadSection();
+    if (document.getElementById('section-numpad').innerHTML === "" && uiState.showNumpad) {
+        renderNumpadSection();
+    }
+};
+
+const renderListSection = () => {
+    const container = document.getElementById('section-list');
+    let chat = [];
+    
+    if (typeof SillyTavern !== 'undefined') {
+        chat = SillyTavern.getContext()?.chat || [];
+    }
+    
+    if (chat.length > 0) {
+        container.innerHTML = chat.slice(-5).reverse().map((msg, i) => {
+            const actualIdx = chat.length - 1 - i;
+            
+            // Logic for Active Animation
+            const isActive = (uiState.viewingId === actualIdx);
+            const activeClass = isActive ? 'msg-active' : ''; 
+            
+            const preview = (msg.mes || "").substring(0, 20).replace(/</g, '&lt;');
+            const roleIcon = msg.is_user ? '👤' : '🤖';
+            
+            return `<div class="msg-item ${activeClass}" onclick="setViewingId(${actualIdx})">
+                        <span style="color:#D500F9;">#${actualIdx}</span> ${roleIcon} ${preview}...
+                    </div>`;
+        }).join('');
+    } else {
+        container.innerHTML = `<div style="padding:5px; color:#666; font-style:italic; font-size:10px;">No messages</div>`;
+    }
 };
 
 const renderNumpadSection = () => {
     const container = document.getElementById('section-numpad');
     const btn = document.getElementById('btn-toggle-numpad');
+    
     if (btn) btn.innerText = uiState.showNumpad ? '🔽 Hide' : '🔢 Search';
     
     if (!uiState.showNumpad) {
@@ -457,10 +543,7 @@ const renderViewerSection = () => {
         return;
     }
     
-    let chat = [];
-    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
-    else if (typeof window.chat !== 'undefined') chat = window.chat;
-    
+    let chat = SillyTavern.getContext()?.chat || [];
     const msg = chat[uiState.viewingId];
     if (msg) {
         let cleanText = stripHtmlToText(msg.mes);
@@ -480,35 +563,6 @@ const renderViewerSection = () => {
     }
 };
 
-const renderListSection = () => {
-    const container = document.getElementById('section-list');
-    let chat = [];
-    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
-    else if (typeof window.chat !== 'undefined') chat = window.chat;
-
-    if (chat && chat.length > 0) {
-        container.innerHTML = chat.slice(-5).reverse().map((msg, i) => {
-            const actualIdx = chat.length - 1 - i;
-            const cleanContent = msg.mes || "";
-            const preview = cleanContent.substring(0, 20).replace(/</g, '&lt;');
-            const roleIcon = msg.is_user ? '👤' : '🤖';
-            
-            // เพิ่ม Logic: Active Class
-            const isActive = (uiState.viewingId === actualIdx);
-            const activeClass = isActive ? 'msg-active' : '';
-
-            return `<div class="msg-item ${activeClass}" onclick="setViewingId(${actualIdx})">
-                        <span style="color:#D500F9;">#${actualIdx}</span> ${roleIcon} ${preview}...
-                    </div>`;
-        }).join('');
-    } else {
-        container.innerHTML = `<div style="padding:5px; color:#666; font-style:italic; font-size:10px;">No messages</div>`;
-    }
-};
-
-// =================================================================
-// 6. STYLES (Upgraded)
-// =================================================================
 const injectStyles = () => {
     const exist = document.getElementById('chronos-style');
     if (exist) exist.remove();
@@ -540,21 +594,22 @@ const injectStyles = () => {
             z-index: 2147483647;
             border-radius: 8px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.9); backdrop-filter: blur(10px);
-            overflow: visible; /* เปิดให้ Tab งอกออกมาได้ */
+            overflow: visible; 
         }
 
-        /* --- NEW TAB BUTTON (ปุ่มทอง) --- */
+        /* --- CYBERPUNK NEON TAB (สีเขียวนีออน) --- */
         #holo-tab-btn {
             position: absolute; top: -24px; right: 20px;
-            background: #C5A059;
-            color: #000; font-size: 11px; font-weight: 800; letter-spacing: 1px;
+            background: #000;
+            color: #00E676; 
+            font-size: 11px; font-weight: 800; letter-spacing: 1px;
             padding: 4px 15px; border-radius: 4px 4px 0 0;
-            border: 1px solid #E6B870; border-bottom: 2px solid #C5A059;
-            box-shadow: 0 -4px 10px rgba(197, 160, 89, 0.3);
+            border: 1px solid #00E676; border-bottom: none;
+            box-shadow: 0 -4px 10px rgba(0, 230, 118, 0.2);
             z-index: 10;
             cursor: pointer; transition: 0.2s;
         }
-        #holo-tab-btn:hover { transform: translateY(-2px); box-shadow: 0 -6px 15px rgba(197, 160, 89, 0.6); }
+        #holo-tab-btn:hover { text-shadow: 0 0 5px #00E676; box-shadow: 0 -5px 15px rgba(0, 230, 118, 0.5); }
 
         .ins-header { 
             background: linear-gradient(90deg, #4A0072, #2a0040); 
@@ -562,10 +617,11 @@ const injectStyles = () => {
             border-bottom: 1px solid #D500F9;
         }
 
-        /* --- NEON SWITCHES --- */
+        /* --- CONTROL SWITCHES (NEON) --- */
         .control-zone { display: flex; gap: 15px; padding: 10px; background: #150518; border-bottom: 1px solid #330044; align-items: center;}
         .switch-row { display: flex; align-items: center; gap: 8px; }
         .switch-label { font-size: 11px; color: #ccc; }
+        
         .neon-switch { position: relative; display: inline-block; width: 30px; height: 16px; }
         .neon-switch input { opacity: 0; width: 0; height: 0; }
         .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #333; transition: .4s; border-radius: 16px; border: 1px solid #555; }
@@ -581,25 +637,32 @@ const injectStyles = () => {
         
         .ins-body { padding: 10px; background: #111; max-height: 400px; overflow-y: auto;}
         
-        /* --- LIST ANIMATION (Swipe) --- */
+        /* --- FIXED LIST ANIMATION (ใช้ Transform) --- */
         .msg-list { max-height: 120px; overflow-y: auto; border: 1px solid #333; margin-bottom: 10px; background: #0a0a0a; border-radius: 4px; }
-        .msg-item { padding: 8px; cursor: pointer; border-bottom: 1px solid #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #888; transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1); }
-        .msg-item:hover { background: #330044; color: #fff; padding-left: 12px; }
         
+        .msg-item { 
+            padding: 8px; 
+            cursor: pointer; 
+            border-bottom: 1px solid #222; 
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
+            color: #888; 
+            transition: transform 0.2s ease, background 0.2s; /* ใช้ Transform แทนการเปลี่ยนขนาด */
+            border-left: 3px solid transparent; /* จองที่ไว้ */
+        }
+        .msg-item:hover { background: #330044; color: #fff; }
+
+        /* ตอนกด: ย้ายตำแหน่งไปขวา 6px แต่ขนาดกล่องเท่าเดิม */
         .msg-active { 
             background: linear-gradient(90deg, #330044, #1a0520); 
             color: #fff; 
-            padding-left: 15px !important; /* ดันไปขวา */
-            border-left: 3px solid #00E676; /* ขีดเขียว */
-            transform: translateX(5px); /* ขยับวืบ */
-            box-shadow: -5px 0 10px rgba(0,0,0,0.5);
+            border-left: 3px solid #00E676;
+            transform: translateX(6px); 
         }
 
-        /* Buttons */
+        /* Buttons & Numpad */
         .toggle-numpad-btn { background: #333; color: #fff; border: 1px solid #555; border-radius: 3px; padding: 2px 8px; font-size: 10px; cursor: pointer; }
         .toggle-numpad-btn:hover { background: #555; }
         
-        /* Numpad */
         .numpad-wrapper { background: #1a1a1a; padding: 8px; border-radius: 4px; margin-bottom: 10px; border: 1px solid #333; animation: fade-in 0.2s; }
         .numpad-display { background: #000; padding: 4px; text-align: right; font-family: monospace; border: 1px solid #444; margin-bottom: 5px; height: 20px; display:flex; align-items:center; justify-content:flex-end; color: #fff;}
         .numpad-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
@@ -624,7 +687,7 @@ const injectStyles = () => {
 };
 
 // =================================================================
-// 7. INIT
+// 6. INIT
 // =================================================================
 window.toggleDrag = (type, isChecked) => {
     if (type === 'orb') dragConfig.orbUnlocked = isChecked;
@@ -666,17 +729,35 @@ const makeDraggable = (elm, type) => {
 };
 
 const createUI = () => {
-    const oldOrb = document.getElementById('chronos-orb'); if (oldOrb) oldOrb.remove();
-    const oldPanel = document.getElementById('chronos-inspector'); if (oldPanel) oldPanel.remove();
-    const orb = document.createElement('div'); orb.id = 'chronos-orb'; orb.innerHTML = '🌌';
-    const ins = document.createElement('div'); ins.id = 'chronos-inspector';
-    document.body.appendChild(orb); document.body.appendChild(ins);
+    const oldOrb = document.getElementById('chronos-orb');
+    if (oldOrb) oldOrb.remove();
+    
+    const oldPanel = document.getElementById('chronos-inspector');
+    if (oldPanel) oldPanel.remove();
+    
+    const orb = document.createElement('div'); 
+    orb.id = 'chronos-orb'; 
+    orb.innerHTML = '🌌';
+    
+    const ins = document.createElement('div'); 
+    ins.id = 'chronos-inspector';
+    
+    document.body.appendChild(orb); 
+    document.body.appendChild(ins);
+    
     orb.onclick = (e) => {
         if (orb.getAttribute('data-dragging') === 'true') return;
-        ins.style.display = (ins.style.display === 'none') ? 'block' : 'none';
-        if (ins.style.display === 'block') updateUI();
+        
+        if (ins.style.display === 'none' || ins.style.display === '') {
+            ins.style.display = 'block';
+            updateUI();
+        } else {
+            ins.style.display = 'none';
+        }
     };
-    makeDraggable(orb, 'orb'); makeDraggable(ins, 'panel');
+    
+    makeDraggable(orb, 'orb'); 
+    makeDraggable(ins, 'panel');
 };
 
 (function() {
@@ -686,11 +767,12 @@ const createUI = () => {
         SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
     }
+    
     // Loop updates only if panel is open, and only texts
     setInterval(() => {
         const ins = document.getElementById('chronos-inspector');
-        if (ins && ins.style.display === 'block') updateUI();
+        if (ins && (ins.style.display === 'block' || ins.style.display === 'flex')) {
+            updateUI();
+        }
     }, 2000);
 })();
-        
-
