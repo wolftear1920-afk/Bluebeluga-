@@ -1,11 +1,12 @@
+
+
 {
-    "display_name": "Chronos Time Saver",
+    "display_name": "Chronos & Friends", 
     "author": "BlueBeluga",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "icon": "fa-clock",
-    "description": "Premium Time Window Optimization with Chronos Orb Interface.",
-    "js": "index.js",
+    "description": "Chronos Time Saver + Friend Side Chat System",
+    "js": "index.js,side_chat.js", 
     "type": "extension",
     "loading_order": 1
 }
-
