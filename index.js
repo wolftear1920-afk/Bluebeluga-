@@ -1,10 +1,19 @@
-// index.js - Chronos V66.17 (Zero Lag / Soft Update) 🌌🧊
-// UI: Neon V47 (Preserved)
-// Fix: 
-// 1. Removes innerHTML spam. Uses DOM text updates for 0% lag.
-// 2. Only re-renders lists/numpad if state actually changes.
+// index.js - Chronos V66.19 (Integrated Friend System + Bookmark UI) 🌌
+// Combined & Optimized by BlueBeluga
 
-const extensionName = "Chronos_V66_17_Smooth";
+const extensionName = "Chronos_Integrated";
+
+// =================================================================
+// 0. SYSTEM PROMPT (ใส่ Prompt ของคุณตรงนี้)
+// =================================================================
+// ⚠️ นำข้อความ Listfriend ยาวๆ ของคุณมาวางทับตรงนี้ (ห้ามลบเครื่องหมาย ` หัวท้าย)
+const FRIEND_SYSTEM_PROMPT = `
+Usage: Always active
+Use HTML code following the specified format.
+All five personalities act as close friends...
+( ... วาง Prompt ทั้งหมดของคุณทับตรงนี้ ... )
+Progress Enforcement: ...
+`;
 
 // =================================================================
 // 1. STATE & CACHE
@@ -14,17 +23,16 @@ let uiState = {
     showNumpad: false,
     viewingId: null,
     numpadValue: "ID...",
-    isPanelBuilt: false // Track if we need to build HTML
+    isPanelBuilt: false,
+    friendMode: false // <--- New: Check Mode
 };
+
+// Friend Chat History
+let friendChatHistory = [];
 
 // Cache to prevent useless DOM updates
 let lastRenderData = {
-    saved: -1,
-    range: "",
-    total: -1,
-    load: -1,
-    max: -1,
-    msgCount: -1
+    saved: -1, range: "", total: -1, load: -1, max: -1, msgCount: -1
 };
 
 const getChronosTokenizer = () => {
@@ -74,7 +82,7 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 3. CALCULATOR
+// 3. CALCULATOR (Original Logic)
 // =================================================================
 const findMaxContext = (contextObj) => {
     let max = 0;
@@ -158,18 +166,13 @@ const calculateStats = () => {
 // =================================================================
 window.toggleNumpad = () => {
     uiState.showNumpad = !uiState.showNumpad;
-    renderNumpadSection(); // Re-render only numpad section
+    renderNumpadSection(); 
 };
-
 window.numpadType = (num) => {
     let current = uiState.numpadValue;
     if (current === "ID...") current = "";
-    if (current.length < 5) {
-        uiState.numpadValue = current + num;
-        updateNumpadDisplay();
-    }
+    if (current.length < 5) { uiState.numpadValue = current + num; updateNumpadDisplay(); }
 };
-
 window.numpadDel = () => {
     let current = uiState.numpadValue;
     if (current === "ID..." || current.length === 0) return;
@@ -177,100 +180,93 @@ window.numpadDel = () => {
     if (uiState.numpadValue === "") uiState.numpadValue = "ID...";
     updateNumpadDisplay();
 };
-
 window.numpadGo = () => {
     const val = uiState.numpadValue;
     if (val === "ID..." || val === "") return;
-    const id = parseInt(val);
-    window.setViewingId(id);
+    window.setViewingId(parseInt(val));
 };
-
 window.setViewingId = (id) => {
-    let chat = [];
-    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
-    else if (typeof window.chat !== 'undefined') chat = window.chat;
+    let chat = SillyTavern.getContext()?.chat || [];
     if (isNaN(id) || id < 0 || id >= chat.length) return;
-    
     uiState.viewingId = id;
-    renderViewerSection(); // Re-render only viewer
-};
-
-window.closeViewer = () => {
-    uiState.viewingId = null;
     renderViewerSection();
 };
-
-window.closePanel = () => {
-    const ins = document.getElementById('chronos-inspector');
-    if (ins) ins.style.display = 'none';
-};
+window.closeViewer = () => { uiState.viewingId = null; renderViewerSection(); };
+window.closePanel = () => { const ins = document.getElementById('chronos-inspector'); if (ins) ins.style.display = 'none'; };
 
 // =================================================================
-// 5. CORE RENDERER (The "Soft Update" Logic)
+// 5. CORE RENDERER & FRIEND SYSTEM
 // =================================================================
 
-// A. Build the Skeleton (Runs Once)
+// A. Build UI (Modified for Integrated Chat)
 const buildBaseUI = () => {
     const ins = document.getElementById('chronos-inspector');
     if (!ins) return;
     
     ins.innerHTML = `
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.17</span>
+            <span>🚀 CHRONOS V66.19</span>
             <span style="cursor:pointer; color:#ff4081;" onclick="closePanel()">✖</span>
         </div>
         
         <div class="control-zone">
-            <label style="cursor:pointer;"><input type="checkbox" onchange="toggleDrag('orb', this.checked)" ${dragConfig.orbUnlocked ? 'checked' : ''}> Move Orb</label>
-            <label style="cursor:pointer;"><input type="checkbox" onchange="toggleDrag('panel', this.checked)" ${dragConfig.panelUnlocked ? 'checked' : ''}> Move Win</label>
+            <label style="cursor:pointer;"><input type="checkbox" onchange="toggleDrag('orb', this.checked)" ${dragConfig.orbUnlocked ? 'checked' : ''}> Orb</label>
+            <label style="cursor:pointer;"><input type="checkbox" onchange="toggleDrag('panel', this.checked)" ${dragConfig.panelUnlocked ? 'checked' : ''}> Win</label>
+            <label style="cursor:pointer; color:#00E676; border-left:1px solid #444; padding-left:10px; margin-left:5px;">
+                <input type="checkbox" onchange="toggleFriendMode(this.checked)" ${uiState.friendMode ? 'checked' : ''}> 💬 Chat
+            </label>
         </div>
 
-        <div class="dashboard-zone">
-            <div class="dash-row" style="border-bottom: 1px dashed #333; padding-bottom: 8px; margin-bottom: 8px;">
-                <span style="color:#aaa;">🔋 Tokens Saved</span>
-                <span class="dash-val" style="color:#E040FB;" id="disp-saved">0 T</span>
+        <div id="view-normal" style="display: ${uiState.friendMode ? 'none' : 'block'};">
+            <div class="dashboard-zone">
+                <div class="dash-row" style="border-bottom: 1px dashed #333; padding-bottom: 8px; margin-bottom: 8px;">
+                    <span style="color:#aaa;">🔋 Tokens Saved</span>
+                    <span class="dash-val" style="color:#E040FB;" id="disp-saved">0 T</span>
+                </div>
+                <div class="dash-row" style="align-items:center;">
+                    <span style="color:#fff;">🧠 Memory</span>
+                    <span class="dash-val" style="color:#00E676; font-size:14px;" id="disp-range">...</span>
+                </div>
+                <div class="progress-container"><div class="progress-bar" id="disp-bar" style="width: 0%"></div></div>
+                <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:5px;">
+                    <button class="toggle-numpad-btn" id="btn-toggle-numpad" onclick="toggleNumpad()">🔢 ID Search</button>
+                    <div style="font-size:9px; color:#aaa;">📚 Total: <span style="color:#fff;" id="disp-total">0</span></div>
+                </div>
             </div>
-
-            <div class="dash-row" style="align-items:center;">
-                <span style="color:#fff;">🧠 Memory</span>
-                <span class="dash-val" style="color:#00E676; font-size:14px;" id="disp-range">...</span>
-            </div>
-
-            <div class="progress-container">
-                <div class="progress-bar" id="disp-bar" style="width: 0%"></div>
-            </div>
-            
-            <div style="display:flex; justify-content:space-between; align-items:flex-end; margin-top:5px;">
-                <button class="toggle-numpad-btn" id="btn-toggle-numpad" onclick="toggleNumpad()">🔢 ID Search</button>
-                <div style="font-size:9px; color:#aaa;">📚 Total: <span style="color:#fff;" id="disp-total">0</span></div>
+            <div class="ins-body">
+                <div id="section-numpad"></div>
+                <div id="section-viewer"></div>
+                <div style="font-size:9px; color:#666; margin-bottom:4px; text-transform:uppercase; margin-top:5px;">Recent Messages</div>
+                <div class="msg-list" id="section-list"></div>
             </div>
         </div>
 
-        <div class="ins-body">
-            <div id="section-numpad"></div>
-            <div id="section-viewer"></div>
-            
-            <div style="font-size:9px; color:#666; margin-bottom:4px; text-transform:uppercase; margin-top:5px;">Recent Messages</div>
-            <div class="msg-list" id="section-list"></div>
+        <div id="view-friend" style="display: ${uiState.friendMode ? 'flex' : 'none'}; flex-direction: column; height: 320px;">
+            <div id="friend-log" style="flex:1; overflow-y:auto; padding:10px; background:#1a1a1a; border-bottom:1px solid #333; font-size:12px; color:#ccc;">
+                <div style="text-align:center; color:#555; margin-top:20px;">Friend Mode Active.<br>Talk to your assistants (OOC).</div>
+            </div>
+            <div style="padding:8px; background:#222; display:flex; gap:5px;">
+                <input type="text" id="friend-input" style="flex:1; background:#000; border:1px solid #444; color:#fff; padding:5px; font-size:12px;" placeholder="Message..." onkeydown="if(event.key==='Enter') sendFriendMsg()">
+                <button onclick="sendFriendMsg()" style="background:#c5a059; border:none; color:#000; font-weight:bold; cursor:pointer; padding:0 10px;">➤</button>
+            </div>
         </div>
     `;
     uiState.isPanelBuilt = true;
 };
 
-// B. Update Numbers Only (Runs Loop)
+// B. Update Loop
 const updateUI = () => {
     const ins = document.getElementById('chronos-inspector');
     if (!ins || ins.style.display === 'none') return;
 
-    // 1. Build structure if missing
-    if (!uiState.isPanelBuilt || ins.innerHTML === "") {
-        buildBaseUI();
-    }
+    if (!uiState.isPanelBuilt || ins.innerHTML === "") buildBaseUI();
+
+    // If in friend mode, skip stat calculation to save CPU
+    if (uiState.friendMode) return;
 
     const stats = calculateStats();
     const fmt = (n) => (n ? n.toLocaleString() : "0");
 
-    // 2. Soft Update Text Nodes (Zero Lag)
     if (stats.savedTokens !== lastRenderData.saved) {
         document.getElementById('disp-saved').innerText = `${fmt(stats.savedTokens)} T`;
         lastRenderData.saved = stats.savedTokens;
@@ -284,32 +280,25 @@ const updateUI = () => {
         lastRenderData.total = stats.totalMsgs;
     }
     
-    // Bar Update
     let percent = stats.max > 0 ? Math.min((stats.currentLoad / stats.max) * 100, 100) : 0;
-    if (Math.abs(percent - lastRenderData.load) > 0.5) { // Only update if significant change
+    if (Math.abs(percent - lastRenderData.load) > 0.5) { 
         document.getElementById('disp-bar').style.width = `${percent}%`;
         lastRenderData.load = percent;
     }
 
-    // 3. Update Sections if needed
     if (stats.totalMsgs !== lastRenderData.msgCount) {
         renderListSection();
         lastRenderData.msgCount = stats.totalMsgs;
     }
-
-    // Ensure stateful sections are rendered (first run check)
     if (document.getElementById('section-numpad').innerHTML === "" && uiState.showNumpad) renderNumpadSection();
 };
 
+// C. Sub-Renderers (Numpad, Viewer, List) - Kept Original
 const renderNumpadSection = () => {
     const container = document.getElementById('section-numpad');
     const btn = document.getElementById('btn-toggle-numpad');
     if (btn) btn.innerText = uiState.showNumpad ? '🔽 Hide Keypad' : '🔢 ID Search';
-    
-    if (!uiState.showNumpad) {
-        container.innerHTML = "";
-        return;
-    }
+    if (!uiState.showNumpad) { container.innerHTML = ""; return; }
     
     const displayColor = uiState.numpadValue === "ID..." ? "#666" : "#fff";
     container.innerHTML = `
@@ -329,36 +318,21 @@ const renderNumpadSection = () => {
                 <button class="num-btn" onclick="numpadType(9)">9</button>
                 <button class="num-btn" onclick="numpadType(0)">0</button>
             </div>
-        </div>
-    `;
+        </div>`;
 };
-
 const updateNumpadDisplay = () => {
     const el = document.getElementById('numpad-screen');
-    if (el) {
-        el.innerText = uiState.numpadValue;
-        el.style.color = uiState.numpadValue === "ID..." ? "#666" : "#fff";
-    }
+    if (el) { el.innerText = uiState.numpadValue; el.style.color = uiState.numpadValue === "ID..." ? "#666" : "#fff"; }
 };
-
 const renderViewerSection = () => {
     const container = document.getElementById('section-viewer');
-    if (uiState.viewingId === null) {
-        container.innerHTML = "";
-        return;
-    }
-    
-    let chat = [];
-    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
-    else if (typeof window.chat !== 'undefined') chat = window.chat;
-    
+    if (uiState.viewingId === null) { container.innerHTML = ""; return; }
+    let chat = SillyTavern.getContext()?.chat || [];
     const msg = chat[uiState.viewingId];
     if (msg) {
         let cleanText = stripHtmlToText(msg.mes);
         let aiViewText = msg.mes; 
-        if (/<[^>]+>|&lt;[^&]+&gt;/.test(msg.mes)) {
-            aiViewText = `[System Content:\n${cleanText}]`;
-        }
+        if (/<[^>]+>|&lt;[^&]+&gt;/.test(msg.mes)) aiViewText = `[System Content:\n${cleanText}]`;
         container.innerHTML = `
             <div class="viewer-container">
                 <div class="viewer-header">
@@ -366,109 +340,146 @@ const renderViewerSection = () => {
                     <button class="close-btn" onclick="closeViewer()">CLOSE</button>
                 </div>
                 <div class="view-area">${aiViewText.replace(/</g, '&lt;')}</div>
-            </div>
-        `;
+            </div>`;
     }
 };
-
 const renderListSection = () => {
     const container = document.getElementById('section-list');
-    let chat = [];
-    if (typeof SillyTavern !== 'undefined') chat = SillyTavern.getContext()?.chat || [];
-    else if (typeof window.chat !== 'undefined') chat = window.chat;
-
+    let chat = SillyTavern.getContext()?.chat || [];
     if (chat && chat.length > 0) {
         container.innerHTML = chat.slice(-5).reverse().map((msg, i) => {
             const actualIdx = chat.length - 1 - i;
-            const cleanContent = msg.mes || "";
-            const preview = cleanContent.substring(0, 20).replace(/</g, '&lt;');
-            const roleIcon = msg.is_user ? '👤' : '🤖';
+            const preview = (msg.mes || "").replace(/<[^>]+>/g,'').substring(0, 20);
             return `<div class="msg-item" onclick="setViewingId(${actualIdx})">
-                        <span style="color:#D500F9;">#${actualIdx}</span> ${roleIcon} ${preview}...
+                        <span style="color:#D500F9;">#${actualIdx}</span> ${msg.is_user ? '👤' : '🤖'} ${preview}...
                     </div>`;
         }).join('');
-    } else {
-        container.innerHTML = `<div style="padding:5px; color:#666; font-style:italic; font-size:10px;">No messages</div>`;
+    } else { container.innerHTML = `<div style="padding:5px; color:#666; font-style:italic;">No messages</div>`; }
+};
+
+// D. Friend Logic Functions
+window.toggleFriendMode = (isActive) => {
+    uiState.friendMode = isActive;
+    document.getElementById('view-normal').style.display = isActive ? 'none' : 'block';
+    document.getElementById('view-friend').style.display = isActive ? 'flex' : 'none';
+};
+
+window.sendFriendMsg = async () => {
+    const input = document.getElementById('friend-input');
+    const log = document.getElementById('friend-log');
+    const txt = input.value.trim();
+    if (!txt) return;
+    input.value = '';
+
+    // Show User Msg
+    log.innerHTML += `<div style="margin-bottom:6px; text-align:right; padding:4px; background:#333; border-radius:4px;"><b>Op:</b> ${txt}</div>`;
+    friendChatHistory.push({ role: 'user', content: `[message] ${txt}` });
+    log.scrollTop = log.scrollHeight;
+
+    // Context & Payload
+    const context = SillyTavern.getContext();
+    const lastMsg = context.chat && context.chat.length > 0 ? context.chat[context.chat.length-1] : { name: '?', mes: '' };
+    const cleanMes = lastMsg.mes.replace(/<[^>]+>/g, '');
+    
+    const payload = [
+        { role: 'system', content: FRIEND_SYSTEM_PROMPT },
+        ...friendChatHistory,
+        { role: 'user', content: `(Story Context: ${lastMsg.name}: ${cleanMes})\n\n[message] ${txt}` }
+    ];
+
+    // Loading & API Call
+    const loadId = 'load-' + Date.now();
+    log.innerHTML += `<div id="${loadId}" style="color:yellow; font-size:10px;">Thinking...</div>`;
+    log.scrollTop = log.scrollHeight;
+
+    try {
+        let reply = "";
+        if (typeof SillyTavern.Generate === 'function') {
+             reply = await SillyTavern.Generate(payload, { quiet: true });
+        } else {
+             reply = "⚠️ API Error: Generation function not found.";
+        }
+        document.getElementById(loadId).remove();
+        log.innerHTML += `<div style="margin-bottom:6px; padding:4px; background:#222; border-radius:4px;">${reply}</div>`;
+        friendChatHistory.push({ role: 'assistant', content: reply });
+    } catch (e) {
+        document.getElementById(loadId).innerText = "Error: " + e.message;
     }
+    log.scrollTop = log.scrollHeight;
 };
 
 // =================================================================
-// 6. STYLES
+// 6. STYLES (Include Orange Bookmark)
 // =================================================================
 const injectStyles = () => {
-    const exist = document.getElementById('chronos-style');
-    if (exist) exist.remove();
-
+    const exist = document.getElementById('chronos-style'); if (exist) exist.remove();
     const style = document.createElement('style');
     style.id = 'chronos-style';
     style.innerHTML = `
+        /* ORB & PANEL */
         #chronos-orb {
             position: fixed; top: 150px; right: 20px; width: 40px; height: 40px;
             background: radial-gradient(circle, rgba(20,0,30,0.9) 0%, rgba(0,0,0,1) 100%);
             border: 2px solid #D500F9; border-radius: 50%;
-            z-index: 2147483647; 
-            cursor: pointer; display: flex; align-items: center; justify-content: center;
+            z-index: 2147483647; cursor: pointer; display: flex; align-items: center; justify-content: center;
             font-size: 20px; color: #E040FB; 
-            box-shadow: 0 0 15px rgba(213, 0, 249, 0.6), inset 0 0 10px rgba(213, 0, 249, 0.3);
-            user-select: none; 
-            animation: spin-slow 4s linear infinite;
-            transition: transform 0.2s;
+            box-shadow: 0 0 15px rgba(213, 0, 249, 0.6); user-select: none; animation: spin-slow 4s linear infinite;
         }
-        #chronos-orb:hover { transform: scale(1.1); border-color: #00E676; color: #00E676; box-shadow: 0 0 25px #00E676; }
-        @keyframes spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
         #chronos-inspector {
             position: fixed; top: 80px; right: 70px; width: 320px; 
             background: rgba(10, 10, 12, 0.95); 
             border: 1px solid #D500F9; border-top: 3px solid #D500F9;
             color: #E1BEE7; font-family: 'Consolas', monospace; font-size: 12px;
-            display: none; 
-            z-index: 2147483647;
-            border-radius: 8px;
+            display: none; z-index: 2147483647; border-radius: 8px;
             box-shadow: 0 20px 60px rgba(0,0,0,0.8); backdrop-filter: blur(10px);
-            overflow: hidden;
+            /* Important for Bookmark Tag */
+            overflow: visible !important; 
         }
-        .ins-header { 
-            background: linear-gradient(90deg, #4A0072, #2a0040); 
-            color: #fff; padding: 10px; font-weight: bold; letter-spacing: 1px; display: flex; justify-content: space-between; 
-            border-bottom: 1px solid #D500F9;
+
+        /* ORANGE BOOKMARK TAG SYSTEM */
+        #chronos-inspector::after {
+            content: '🔖 SYSTEM'; position: absolute; top: -24px; right: 30px;
+            background: #ff6d00; color: #000; font-size: 10px; font-weight: 800;
+            padding: 4px 12px; letter-spacing: 1px;
+            border-radius: 4px 4px 0 0; border: 1px solid #ff9e40; border-bottom: none;
+            box-shadow: 0 -5px 15px rgba(255, 109, 0, 0.4); z-index: -1;
         }
-        .control-zone { display: flex; gap: 15px; padding: 6px 10px; background: #1a0520; color: #00E676; font-size: 11px; border-bottom: 1px solid #330044; }
+        #chronos-inspector::before {
+            content: ''; position: absolute; top: -2px; right: 30px;
+            width: 80px; height: 2px; background: #ff6d00; z-index: 10;
+        }
+
+        /* HEADER & BODY */
+        .ins-header { background: linear-gradient(90deg, #4A0072, #2a0040); color: #fff; padding: 10px; font-weight: bold; display: flex; justify-content: space-between; border-bottom: 1px solid #D500F9; }
+        .control-zone { display: flex; gap: 15px; padding: 6px 10px; background: #1a0520; color: #00E676; border-bottom: 1px solid #330044; }
         .dashboard-zone { background: #050505; padding: 15px; border-bottom: 1px solid #333; }
-        .dash-row { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; align-items: center; }
-        .dash-val { font-weight: bold; font-size: 13px; }
-        .progress-container { width: 100%; height: 6px; background: #222; border-radius: 3px; margin-top: 8px; overflow: hidden; }
-        .progress-bar { height: 100%; background: linear-gradient(90deg, #D500F9, #00E676); width: 0%; transition: width 0.4s ease-out; }
-        
-        .ins-body { padding: 10px; background: #111; max-height: 400px; overflow-y: auto;}
-        .msg-list { max-height: 120px; overflow-y: auto; border: 1px solid #333; margin-bottom: 10px; background: #0a0a0a; border-radius: 4px; }
-        .msg-item { padding: 6px; cursor: pointer; border-bottom: 1px solid #222; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: #888; transition: 0.2s;}
-        .msg-item:hover { background: #330044; color: #fff; padding-left: 10px;}
+        .ins-body { padding: 10px; background: #111; max-height: 400px; overflow-y: auto; }
 
-        /* Buttons */
-        .toggle-numpad-btn { background: #333; color: #fff; border: 1px solid #555; border-radius: 3px; padding: 2px 8px; font-size: 10px; cursor: pointer; }
-        .toggle-numpad-btn:hover { background: #555; }
+        /* ELEMENTS */
+        .progress-bar { height: 6px; background: linear-gradient(90deg, #D500F9, #00E676); width: 0%; transition: width 0.4s; }
+        .msg-item { padding: 6px; cursor: pointer; border-bottom: 1px solid #222; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color:#888; }
+        .msg-item:hover { background: #330044; color: #fff; }
+        .toggle-numpad-btn { background: #333; color: #fff; border: 1px solid #555; padding: 2px 8px; cursor: pointer; }
         
-        /* Numpad */
-        .numpad-wrapper { background: #1a1a1a; padding: 8px; border-radius: 4px; margin-bottom: 10px; border: 1px solid #333; animation: fade-in 0.2s; }
-        .numpad-display { background: #000; padding: 4px; text-align: right; font-family: monospace; border: 1px solid #444; margin-bottom: 5px; height: 20px; display:flex; align-items:center; justify-content:flex-end; color: #fff;}
+        /* NUMPAD */
+        .numpad-wrapper { background: #1a1a1a; padding: 8px; border: 1px solid #333; margin-bottom: 10px; }
+        .numpad-display { background: #000; padding: 4px; text-align: right; margin-bottom: 5px; color:#fff; }
         .numpad-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px; }
-        .num-btn { background: #2a2a2a; color: #ccc; border: 1px solid #444; border-radius: 3px; padding: 6px; font-size: 11px; cursor: pointer; }
+        .num-btn { background: #2a2a2a; color: #ccc; border: 1px solid #444; padding: 6px; cursor: pointer; }
         .num-btn:active { background: #D500F9; color: #fff; }
-        .del-btn { color: #ff4081; }
-        .go-btn { background: #00E676; color: #000; font-weight:bold; }
+        .del-btn { color: #ff4081; } .go-btn { background: #00E676; color: #000; }
 
-        /* Viewer */
-        .viewer-container { margin-bottom: 10px; border: 1px solid #D500F9; border-radius: 4px; background: #080808; overflow: hidden; animation: fade-in 0.2s; }
-        .viewer-header { background: #1a0520; padding: 5px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #333; }
-        .close-btn { background: #ff4081; color: #fff; border: none; font-size: 9px; padding: 2px 6px; border-radius: 2px; cursor: pointer; }
-        .view-area { padding: 8px; height: 120px; overflow-y: auto; color: #00E676; white-space: pre-wrap; word-wrap: break-word; font-size: 11px; }
-
+        /* VIEWER */
+        .viewer-container { border: 1px solid #D500F9; background: #080808; margin-bottom: 10px; }
+        .viewer-header { background: #1a0520; padding: 5px; display: flex; justify-content: space-between; }
+        .close-btn { background: #ff4081; color: #fff; border: none; font-size: 9px; cursor: pointer; }
+        .view-area { padding: 8px; height: 120px; overflow-y: auto; color: #00E676; font-size: 11px; white-space: pre-wrap; }
+        
+        /* SCROLLBAR */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: #111; }
         ::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: #D500F9; }
-        @keyframes fade-in { from { opacity: 0; transform: translateY(-5px); } to { opacity: 1; transform: translateY(0); } }
+        @keyframes spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
     `;
     document.head.appendChild(style);
 };
@@ -536,147 +547,9 @@ const createUI = () => {
         SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
     }
-    // Loop updates only if panel is open, and only texts
     setInterval(() => {
         const ins = document.getElementById('chronos-inspector');
         if (ins && ins.style.display === 'block') updateUI();
     }, 2000);
 })();
-
-// =================================================================
-// 7. FRIEND SIDE CHAT SYSTEM (วางต่อท้าย Chronos ได้เลย)
-// =================================================================
-
-(function() { // ครอบด้วยฟังก์ชันเพื่อไม่ให้ตีกับ Chronos
-
-    // --- ส่วนตั้งค่า (Prompt) ---
-    // ⚠️ สำคัญ: ห้ามลบเครื่องหมาย ` (Backtick) หัวท้ายเด็ดขาด
-    const SYSTEM_PROMPT = `
-Usage: Always active
-Use HTML code following the specified format.
-All five personalities act as close friends...
-( ... ใส่ Prompt ยาวๆ ของคุณแทนที่ตรงนี้ ... )
-Progress Enforcement: ...
-`;
-
-    // ตัวแปรเก็บประวัติ
-    let chatHistory = [];
-
-    // ฟังก์ชันสร้างหน้าต่าง
-    function createChatWindow() {
-        if (document.getElementById('side-friend-panel')) return;
-
-        // CSS
-        const style = document.createElement('style');
-        style.innerHTML = `
-            #side-friend-panel {
-                position: fixed; top: 100px; left: 20px; 
-                width: 380px; height: 600px;
-                background: #111; border: 1px solid #c5a059;
-                display: none; flex-direction: column; z-index: 9999;
-                box-shadow: 0 0 20px rgba(0,0,0,0.8);
-                font-family: sans-serif; resize: both; overflow: hidden;
-            }
-            .sf-header { background: #c5a059; color: #000; padding: 8px; font-weight: bold; cursor: move; display:flex; justify-content:space-between; }
-            .sf-log { flex: 1; overflow-y: auto; padding: 10px; background: #1a1a1a; color: #ccc; font-size: 13px; }
-            .sf-input { display: flex; padding: 8px; background: #222; gap: 5px; }
-            .sf-text { flex: 1; background: #000; color: #fff; border: 1px solid #444; padding: 5px; }
-            .sf-btn { background: #c5a059; border: none; font-weight: bold; cursor: pointer; padding: 0 10px; }
-            .sf-msg { margin-bottom: 8px; padding: 6px; border-radius: 4px; background: #2a2a2a; }
-            .sf-user { text-align: right; background: #333; color: #aaa; }
-        `;
-        document.head.appendChild(style);
-
-        // HTML
-        const panel = document.createElement('div');
-        panel.id = 'side-friend-panel';
-        panel.innerHTML = `
-            <div class="sf-header" id="sf-drag">
-                <span>👥 Friends Overlay</span>
-                <span style="cursor:pointer" onclick="this.parentElement.parentElement.style.display='none'">✖</span>
-            </div>
-            <div class="sf-log" id="sf-log-area">
-                <div style="text-align:center; color:#555; margin-top:20px;">System Ready.<br>Chat is separate from main story.</div>
-            </div>
-            <div class="sf-input">
-                <input type="text" class="sf-text" id="sf-input-box" placeholder="Message to friends (OOC)...">
-                <button class="sf-btn" id="sf-send-btn">SEND</button>
-            </div>
-        `;
-        document.body.appendChild(panel);
-
-        // Events
-        $(panel).draggable({ handle: "#sf-drag" }); // ใช้ jQuery ของ ST
-        
-        const sendFunc = async () => {
-            const txt = document.getElementById('sf-input-box').value;
-            if(!txt) return;
-            document.getElementById('sf-input-box').value = '';
-            
-            // Show User Msg
-            const log = document.getElementById('sf-log-area');
-            log.innerHTML += `<div class="sf-msg sf-user">Op: ${txt}</div>`;
-            chatHistory.push({ role: 'user', content: `[message] ${txt}` });
-
-            // Prepare API Payload
-            const context = SillyTavern.getContext();
-            const lastMes = context.chat && context.chat.length ? context.chat[context.chat.length-1].mes : "";
-            // ตัด HTML tags ออกก่อนส่ง
-            const cleanMes = lastMes.replace(/<[^>]+>/g, '');
-            
-            const payload = [
-                { role: 'system', content: SYSTEM_PROMPT },
-                ...chatHistory,
-                { role: 'user', content: `(Current Story Context: "${cleanMes}")\n\n[message] ${txt}` }
-            ];
-
-            // Show Loading
-            const loadId = 'load'+Date.now();
-            log.innerHTML += `<div id="${loadId}" style="color:yellow; font-size:11px;">Generating...</div>`;
-            log.scrollTop = log.scrollHeight;
-
-            try {
-                // --- CONNECT TO API ---
-                // ใช้ท่าไม้ตาย: Generate ผ่าน ST function (ถ้ามี)
-                // ถ้าไม่มี ให้ตอบกลับหลอกๆ เพื่อเทส UI ก่อน
-                
-                let reply = "";
-                if(typeof SillyTavern.Generate === 'function') {
-                     // พยายามเรียกใช้ (API จริง)
-                     reply = await SillyTavern.Generate(payload, { quiet: true });
-                } else {
-                     // ถ้าหาฟังก์ชันไม่เจอ (Mock)
-                     await new Promise(r => setTimeout(r, 1000)); // รอ 1 วิ
-                     reply = "⚠️ API Error: Cannot find Generation function. UI is working though!";
-                }
-
-                document.getElementById(loadId).remove();
-                log.innerHTML += `<div class="sf-msg">${reply}</div>`;
-                chatHistory.push({ role: 'assistant', content: reply });
-                
-            } catch(e) {
-                document.getElementById(loadId).innerText = "Error: " + e.message;
-            }
-            log.scrollTop = log.scrollHeight;
-        };
-
-        document.getElementById('sf-send-btn').onclick = sendFunc;
-        document.getElementById('sf-input-box').onkeydown = (e) => { if(e.key==='Enter') sendFunc(); };
-    }
-
-    // สร้างปุ่มเปิด
-    $(document).ready(() => {
-        createChatWindow();
-        const btn = document.createElement('div');
-        btn.className = 'drawer-trigger';
-        btn.innerHTML = '👥';
-        btn.onclick = () => {
-            const p = document.getElementById('side-friend-panel');
-            p.style.display = (p.style.display === 'none') ? 'flex' : 'none';
-        };
-        const bar = document.getElementById('top-bar');
-        if(bar) bar.appendChild(btn);
-    });
-
-})(); // จบฟังก์ชันครอบ
-
+    
