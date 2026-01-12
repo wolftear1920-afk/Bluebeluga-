@@ -1,10 +1,10 @@
 {
     "display_name": "Chronos & Friends",
     "author": "BlueBeluga",
-    "version": "2.1.0",
+    "version": "2.2.0",
     "icon": "fa-clock",
     "description": "Chronos Time Saver + Friend Side Chat System",
-    "js": ["index.js", "side_chat.js"], 
+    "js": "index.js", 
     "type": "extension",
     "loading_order": 1
 }
