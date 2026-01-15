@@ -1,4 +1,4 @@
-// index.js - Chronos V66.30 (Touch Fix Final) 🌌
+// index.js - Chronos V66.30 (Touch Fix Final - Modified)
 // Part 1: Config & Data
 
 const extensionName = "Chronos_Ultimate_V30";
@@ -27,9 +27,10 @@ You are roleplaying as the specific characters defined by the user.
 // 1. STATE & STORAGE MANAGEMENT
 // =================================================================
 
+// แก้ไข: เปิดให้ขยับได้ตั้งแต่เริ่ม (True)
 let dragConfig = {
-    orbUnlocked: false,
-    panelUnlocked: false
+    orbUnlocked: true,
+    panelUnlocked: true
 };
 
 let uiState = {
@@ -274,6 +275,15 @@ const calculateStats = () => {
 // =================================================================
 // 4. INTERACTION
 // =================================================================
+
+// แก้ไข: เพิ่มฟังก์ชัน toggleDrag ที่ขาดหายไป
+window.toggleDrag = (type, state) => {
+    if (type === 'orb') {
+        dragConfig.orbUnlocked = state;
+    } else if (type === 'panel') {
+        dragConfig.panelUnlocked = state;
+    }
+};
 
 window.toggleNumpad = () => {
     uiState.showNumpad = !uiState.showNumpad;
@@ -521,7 +531,8 @@ window.sendFriendMsg = async () => {
     
     log.scrollTop = log.scrollHeight;
 };
-        // index.js - Part 4: UI Renderer
+
+// index.js - Part 4: UI Renderer
 
 // =================================================================
 // 5. CORE RENDERER (UI GENERATION)
@@ -768,7 +779,7 @@ const renderViewerSection = () => {
     const msg = chat[uiState.viewingId];
     
     if (msg) {
-        let text = /<[^>]+>/.test(msg.mes) ? `[System Content:\n${stripHtmlToText(msg.mes)}]` : ms.mes;
+        let text = /<[^>]+>/.test(msg.mes) ? `[System Content:\n${stripHtmlToText(msg.mes)}]` : msg.mes;
         container.innerHTML = `
             <div class="viewer-container">
                 <div class="viewer-header">
@@ -780,8 +791,6 @@ const renderViewerSection = () => {
         `;
     }
 };
-
-
 
 // index.js - Part 5: Styles & Init (Native Touch Fix)
 
@@ -801,8 +810,9 @@ const injectStyles = () => {
             position: fixed;
             top: 150px;
             right: 20px;
-            width: 50px; /* เพิ่มขนาดให้แตะง่ายขึ้น */
-            height: 50px;
+            /* แก้ไข: ลดขนาดจาก 50px เป็น 38px */
+            width: 38px;
+            height: 38px;
             background: radial-gradient(circle, rgba(20,0,30,0.95) 0%, rgba(0,0,0,1) 100%);
             border: 2px solid #D500F9;
             border-radius: 50%;
@@ -812,7 +822,7 @@ const injectStyles = () => {
             display: flex;
             align-items: center;
             justify-content: center;
-            font-size: 24px;
+            font-size: 18px; /* ลด Font ตามขนาด */
             color: #E040FB;
             box-shadow: 0 0 15px rgba(213, 0, 249, 0.6);
             animation: spin-slow 4s linear infinite;
@@ -830,7 +840,6 @@ const injectStyles = () => {
             box-shadow: 0 0 25px #00E676, inset 0 0 10px #00E676;
             transform: scale(1.1);
         }
-
         @keyframes spin-slow {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
@@ -1149,7 +1158,6 @@ const injectStyles = () => {
             border-radius: 2px;
             cursor: pointer;
         }
-
         .view-area {
             padding: 8px;
             height: 120px;
@@ -1313,3 +1321,4 @@ const makeDraggable = (elm, type, setDragStateCallback) => {
         }
     }, 2000);
 })();
+
