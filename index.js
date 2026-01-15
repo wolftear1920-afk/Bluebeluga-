@@ -1187,4 +1187,111 @@ const createUI = () => {
 };
 
 const makeDraggable = (elm, type, clickCallback) => {
+    let offsetX = 0;
+    let offsetY = 0;
+    let isDragging = false;
+    let hasMoved = false;
+
+    // --- MOUSE EVENTS (PC) ---
+    elm.onmousedown = function(e) {
+        if (e.target.id === 'btn-close-panel') return;
+        if (type === 'panel' && !e.target.classList.contains('ins-header') && !e.target.parentElement.classList.contains('ins-header')) return;
+        
+        e.preventDefault();
+        
+        offsetX = e.clientX - elm.getBoundingClientRect().left;
+        offsetY = e.clientY - elm.getBoundingClientRect().top;
+        isDragging = true;
+        hasMoved = false;
+
+        document.onmousemove = function(e) {
+            if (!isDragging) return;
+            
+            if (type === 'orb' && !dragConfig.orbUnlocked) return;
+            if (type === 'panel' && !dragConfig.panelUnlocked) return;
+
+            hasMoved = true;
+            elm.style.left = (e.clientX - offsetX) + "px";
+            elm.style.top = (e.clientY - offsetY) + "px";
+        };
+
+        document.onmouseup = function() {
+            isDragging = false;
+            document.onmousemove = null;
+            document.onmouseup = null;
+            
+            if (!hasMoved && clickCallback) {
+                clickCallback();
+            }
+        };
+    };
+
+    // --- TOUCH EVENTS (MOBILE) ---
+    elm.addEventListener('touchstart', function(e) {
+        if (e.target.id === 'btn-close-panel') return;
+        if (type === 'panel' && !e.target.classList.contains('ins-header') && !e.target.parentElement.classList.contains('ins-header')) return;
+
+        e.stopPropagation(); 
+        e.preventDefault();
+
+        const touch = e.touches[0];
+        offsetX = touch.clientX - elm.getBoundingClientRect().left;
+        offsetY = touch.clientY - elm.getBoundingClientRect().top;
+        isDragging = true;
+        hasMoved = false;
+
+    }, { passive: false });
+
+    elm.addEventListener('touchmove', function(e) {
+        if (!isDragging) return;
+        
+        if (type === 'orb' && !dragConfig.orbUnlocked) return;
+        if (type === 'panel' && !dragConfig.panelUnlocked) return;
+        
+        e.preventDefault();
+        e.stopPropagation();
+
+        hasMoved = true;
+        const touch = e.touches[0];
+        elm.style.left = (touch.clientX - offsetX) + "px";
+        elm.style.top = (touch.clientY - offsetY) + "px";
+        
+    }, { passive: false });
+
+    elm.addEventListener('touchend', function(e) {
+        isDragging = false;
+        
+        if (!hasMoved && clickCallback) {
+            clickCallback();
+        }
+    });
+};
+
+// Start Extension
+(function() {
+    injectStyles();
+    
+    setTimeout(createUI, 2000); 
+    
+    // Register Hooks & Event Listeners
+    if (typeof SillyTavern !== 'undefined' && SillyTavern.extension_manager) {
+        SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
+        SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
+    }
+
+    if (typeof SillyTavern !== 'undefined' && SillyTavern.eventSource) {
+        // ดักจับ Event ตอน Lorebook ทำงานจริง (ตามโค้ดต้นฉบับที่คุณให้มา)
+        SillyTavern.eventSource.on('world_info_activated', (data) => {
+            console.log('[Chronos] World Info Activated:', data);
+            onWorldInfoActivated(data);
+        });
+    }
+    
+    setInterval(() => {
+        const ins = document.getElementById('chronos-inspector');
+        if (ins && (ins.style.display === 'block' || ins.style.display === 'flex')) {
+            updateUI();
+        }
+    }, 2000);
+})();
     
