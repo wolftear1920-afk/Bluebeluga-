@@ -135,7 +135,6 @@ const stripHtmlToText = (html) => {
                
     return text;
 };
-
 // index.js - Part 2: Logic Core (Full Logic)
 
 // =================================================================
@@ -384,7 +383,7 @@ const findMaxContext = (contextObj) => {
     
     return max;
 };
-    // index.js - Part 3: Interaction
+// index.js - Part 3: Interaction
 
 // =================================================================
 // 4. INTERACTION
@@ -583,7 +582,7 @@ window.sendFriendMsg = async () => {
     
     log.scrollTop = log.scrollHeight;
 };
-        // index.js - Part 4: UI Renderer
+// index.js - Part 4: UI Renderer
 
 // =================================================================
 // 5. CORE RENDERER (UI GENERATION)
@@ -749,7 +748,7 @@ const renderFriendBody = () => {
         </div>`;
     }
 };
-        // index.js - Part 5: Update Loop & Styles
+// index.js - Part 5: Update Loop & Styles
 
 // =================================================================
 // 6. UPDATE LOOP & STYLES
