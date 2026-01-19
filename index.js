@@ -1,7 +1,7 @@
-// index.js - Chronos V66.60 (Full Restoration & Fixes)
+// index.js - Chronos V66.80 (Absolute Full Version)
 // Part 1: Config & Data
 
-const extensionName = "Chronos_Ultimate_V60";
+const extensionName = "Chronos_Ultimate_V80";
 
 // =================================================================
 // 0. HIDDEN PROMPTS
@@ -44,11 +44,12 @@ let uiState = {
     editingCharId: null
 };
 
-// เก็บข้อมูล Lorebook
+// เก็บข้อมูล Lorebook แบบละเอียด
 let lorebookState = {
     totalEntries: 0,
     activeEntries: [], 
-    activeCount: 0
+    activeCount: 0,
+    scanStatus: "Ready"
 };
 
 let globalData = {
@@ -135,7 +136,7 @@ const stripHtmlToText = (html) => {
     return text;
 };
 
-// index.js - Part 2: Logic Core
+// index.js - Part 2: Logic Core (Full Logic)
 
 // =================================================================
 // 2. HOOKS & EVENTS
@@ -166,19 +167,22 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 3. LOREBOOK ENGINE (Event Listener)
+// 3. LOREBOOK ENGINE
 // =================================================================
 
-// ฟังก์ชันรับ Event จาก SillyTavern (แม่นยำที่สุด)
+// รับ Event จาก SillyTavern (แม่นยำที่สุด)
 const onWorldInfoActivated = (entryList) => {
-    // entryList คือ array ของ lorebook ที่ทำงานจริงในรอบนี้
-    if (!Array.isArray(entryList)) return;
+    if (!Array.isArray(entryList)) {
+        return;
+    }
 
+    lorebookState.scanStatus = "Event Triggered";
+    
     const mappedEntries = entryList.map(entry => {
-        // กำหนด Strategy Icon
         let strategyIcon = '🟢'; // Normal
-        // ตรวจสอบเงื่อนไข Constant
-        if (entry.constant || (entry.position && entry.position.includes('constant'))) {
+        
+        // เช็คเงื่อนไข Strategy แบบละเอียด
+        if (entry.constant || (entry.position && typeof entry.position === 'string' && entry.position.includes('constant'))) {
             strategyIcon = '🔵'; // Constant
         } else if (entry.vectorized) {
             strategyIcon = '🔗'; // Vectorized
@@ -195,58 +199,97 @@ const onWorldInfoActivated = (entryList) => {
     lorebookState.activeEntries = mappedEntries;
     lorebookState.activeCount = mappedEntries.length;
     
-    // อัปเดต Total
+    // อัปเดตจำนวนทั้งหมด (Total)
     if (typeof SillyTavern !== 'undefined' && SillyTavern.world_info) {
-        lorebookState.totalEntries = Object.values(SillyTavern.world_info).filter(e => !e.disable).length;
+        const allEntries = Object.values(SillyTavern.world_info);
+        const enabledEntries = allEntries.filter(e => !e.disable);
+        lorebookState.totalEntries = enabledEntries.length;
     }
-
+    
     updateUI();
 };
 
-// ฟังก์ชันจำลองการสแกน (ใช้ตอนกดปุ่ม Check Manual)
+// Manual Scan (บังคับสแกนเอง - เขียนแบบละเอียด)
 const manualScanLorebooks = () => {
+    lorebookState.scanStatus = "Scanning...";
+    
+    // 1. หาแหล่งข้อมูล World Info
     let entries = [];
-    if (typeof SillyTavern !== 'undefined' && SillyTavern.world_info) {
-        entries = Object.values(SillyTavern.world_info);
+    if (typeof SillyTavern !== 'undefined') {
+        if (SillyTavern.world_info) {
+            // กรณีปกติ: SillyTavern เก็บไว้ใน world_info
+            entries = Object.values(SillyTavern.world_info);
+        } else if (SillyTavern.getContext) {
+            // กรณีสำรอง: ลองหาใน Context
+            const ctx = SillyTavern.getContext();
+            if (ctx && ctx.world_info) {
+                entries = ctx.world_info;
+            }
+        }
     }
 
-    if (!entries.length) return;
+    if (!entries || entries.length === 0) {
+        lorebookState.scanStatus = "No WI Found";
+        lorebookState.activeEntries = [];
+        return;
+    }
 
-    // หาข้อความล่าสุดมาเช็ค
-    let context = typeof SillyTavern !== 'undefined' ? SillyTavern.getContext() || {} : {};
+    // 2. เตรียมข้อความสำหรับสแกน
+    let context = {};
+    if (typeof SillyTavern !== 'undefined') {
+        context = SillyTavern.getContext() || {};
+    }
     const chat = context.chat || [];
-    let textToScan = "";
-    if (chat.length > 0) textToScan += (chat[chat.length - 1].mes || "") + "\n";
     
-    // เอาข้อความที่เรากำลังพิมพ์ด้วย (ถ้ามี)
+    let textToScan = "";
+    
+    // เอาข้อความล่าสุด 2 อัน
+    if (chat.length > 0) {
+        textToScan += (chat[chat.length - 1].mes || "") + "\n";
+    }
+    if (chat.length > 1) {
+        textToScan += (chat[chat.length - 2].mes || "") + "\n";
+    }
+    
+    // เอาในช่องพิมพ์ด้วย
     const inputBox = document.getElementById('send_textarea');
-    if (inputBox) textToScan += inputBox.value + "\n";
+    if (inputBox && inputBox.value) {
+        textToScan += inputBox.value + "\n";
+    }
     
     textToScan = textToScan.toLowerCase();
 
     let activeList = [];
     let totalCount = 0;
 
+    // 3. เริ่มสแกนทีละตัว
     entries.forEach(entry => {
-        if (entry.disable) return;
+        if (entry.disable) {
+            return; // ข้าม
+        }
         totalCount++;
 
         let isActivated = false;
         let triggerWord = "";
         let strategyIcon = '🟢';
 
-        // 1. Check Constant
-        if (entry.constant || (entry.position && entry.position.includes('constant'))) {
+        // Check Constant
+        if (entry.constant || (entry.position && typeof entry.position === 'string' && entry.position.includes('constant'))) {
             isActivated = true;
             triggerWord = "[Constant]";
             strategyIcon = '🔵';
         } 
-        // 2. Check Keys
+        // Check Keys
         else {
             let keys = [];
-            if (Array.isArray(entry.keys)) keys = entry.keys;
-            else if (typeof entry.keys === 'string') keys = entry.keys.split(',').map(k => k.trim()).filter(k => k);
-            else if (entry.key) keys = entry.key.split(',').map(k => k.trim()).filter(k => k);
+            
+            if (Array.isArray(entry.keys)) {
+                keys = entry.keys;
+            } else if (typeof entry.keys === 'string') {
+                keys = entry.keys.split(',').map(k => k.trim()).filter(k => k);
+            } else if (entry.key) {
+                 keys = entry.key.split(',').map(k => k.trim()).filter(k => k);
+            }
 
             for (let k of keys) {
                 if (k && textToScan.includes(k.toLowerCase())) {
@@ -270,9 +313,10 @@ const manualScanLorebooks = () => {
     lorebookState.totalEntries = totalCount;
     lorebookState.activeEntries = activeList;
     lorebookState.activeCount = activeList.length;
+    lorebookState.scanStatus = `Found ${activeList.length}`;
 };
 
-// 3.3 Calculator (แก้ Token Saved ให้แม่นยำขึ้น)
+// Calculator (เขียนเต็ม)
 const calculateStats = () => {
     let chat = [];
     let context = {};
@@ -285,9 +329,10 @@ const calculateStats = () => {
     const maxTokens = findMaxContext(context);
     const tokenizer = getChronosTokenizer();
     
-    // ฟังก์ชันนับ Token แบบละเอียด
     const quickCount = (text) => {
-        if (!text) return 0;
+        if (!text) {
+            return 0;
+        }
         if (tokenizer && typeof tokenizer.encode === 'function') {
             return tokenizer.encode(text).length;
         }
@@ -296,25 +341,21 @@ const calculateStats = () => {
 
     let totalSaved = 0;
     
+    // วนลูปเช็คทุกข้อความ
     chat.forEach((msg) => {
         const rawMsg = msg.mes || "";
         let rawCount = quickCount(rawMsg);
         let cleanCount = 0;
         
-        // ถ้าเป็นข้อความที่มี HTML (System Generated) ให้ลอง strip ดูความต่าง
         if (/<[^>]+>|&lt;[^&]+&gt;/.test(rawMsg)) {
             const cleanText = stripHtmlToText(rawMsg);
-            // สมมติว่า System Content คือสิ่งที่ AI เห็น
             const formattedClean = `[System Content:\n${cleanText}]`;
             cleanCount = quickCount(formattedClean);
             
-            // ถ้าข้อความดิบยาวกว่าข้อความที่ Clean แล้ว แปลว่าส่วนต่างคือ HTML ที่ไม่ได้ส่งไป (หรือส่งไปน้อยลง)
-            // นี่คือค่า "Saved Tokens" โดยประมาณ
             if (rawCount > cleanCount) {
                 totalSaved += (rawCount - cleanCount);
             }
         } else {
-            // ข้อความปกติไม่มี Saved Token
             cleanCount = rawCount;
         }
     });
@@ -330,18 +371,20 @@ const calculateStats = () => {
 
 const findMaxContext = (contextObj) => {
     let max = 0;
+    
     if (contextObj.max_context && contextObj.max_context > 0) {
         max = parseInt(contextObj.max_context);
     } else if (typeof SillyTavern !== 'undefined' && SillyTavern.settings?.context_size) {
         max = parseInt(SillyTavern.settings.context_size);
     }
+    
     if (max === 0) {
         max = 4096;
     }
+    
     return max;
 };
-
-// index.js - Part 3: Interaction & Chat System
+    // index.js - Part 3: Interaction
 
 // =================================================================
 // 4. INTERACTION
@@ -355,11 +398,11 @@ window.toggleDrag = (type, state) => {
     }
 };
 
+// แก้ไข: กดปุ่มแล้วสแกนทันที
 window.toggleLorebookView = () => {
     uiState.showNumpad = !uiState.showNumpad;
-    // ถ้าเปิดขึ้นมา ให้ลอง Manual Scan ทันทีเพื่อความรวดเร็ว
     if (uiState.showNumpad) {
-        manualScanLorebooks();
+        manualScanLorebooks(); // เรียกสแกนทันทีที่เปิด
     }
     renderLorebookList(); 
 };
@@ -395,8 +438,6 @@ window.closePanel = () => {
     }
 };
 
-// --- Character Settings Logic ---
-
 window.toggleCharSettings = () => {
     uiState.showCharSettings = !uiState.showCharSettings;
     renderFriendBody();
@@ -404,8 +445,8 @@ window.toggleCharSettings = () => {
 
 window.saveNewCharacter = () => {
     const name = document.getElementById('new-char-name').value;
-    const color = document.getElementById('new-char-color').value;
     const desc = document.getElementById('new-char-desc').value;
+    const color = document.getElementById('new-char-color').value;
     
     if (name && desc) {
         const newId = Date.now();
@@ -415,31 +456,29 @@ window.saveNewCharacter = () => {
             color: color, 
             personality: desc 
         });
-        saveGlobalData();
+        saveGlobalData(); 
         renderFriendBody();
     }
 };
 
 window.deleteCharacter = (id) => {
     globalData.characters = globalData.characters.filter(c => c.id !== id);
-    saveGlobalData();
+    saveGlobalData(); 
     renderFriendBody();
 };
 
 window.setChatMode = (mode, charId = null) => {
-    uiState.chatMode = mode;
+    uiState.chatMode = mode; 
     uiState.selectedCharId = charId;
     renderFriendBody();
 };
-
-// --- Hidden Summary Logic ---
 
 const generateHiddenSummary = async (chatText) => {
     try {
         if (typeof SillyTavern.Generate === 'function') {
             const summaryPayload = [
                 { role: 'system', content: HIDDEN_SUMMARY_PROMPT },
-                { role: 'user', content: `Analyze this chat: ${chatText}` }
+                { role: 'user', content: `Analyze: ${chatText}` }
             ];
             
             const result = await SillyTavern.Generate(summaryPayload, { quiet: true });
@@ -451,20 +490,18 @@ const generateHiddenSummary = async (chatText) => {
             
             saveGlobalData();
         }
-    } catch(e) { 
-        console.error("Summary Failed:", e); 
+    } catch(e) {
+        console.error(e);
     }
 };
-
-// --- Tab Switching Logic ---
 
 window.toggleTabMode = () => {
     uiState.friendMode = !uiState.friendMode;
     
-    const normalView = document.getElementById('view-normal');
-    const friendView = document.getElementById('view-friend');
     const controls = document.getElementById('panel-controls');
     const tabBtn = document.getElementById('holo-tab-btn');
+    const normalView = document.getElementById('view-normal');
+    const friendView = document.getElementById('view-friend');
 
     if (normalView && friendView) {
         if (uiState.friendMode) {
@@ -474,29 +511,29 @@ window.toggleTabMode = () => {
             normalView.style.display = 'block';
             friendView.style.display = 'none';
         }
-        
-        if (controls) {
-            if (uiState.friendMode) {
-                controls.style.display = 'none';
-            } else {
-                controls.style.display = 'flex';
-            }
-        }
-        
+    }
+    
+    if (controls) {
         if (uiState.friendMode) {
-            renderFriendBody();
+            controls.style.display = 'none';
+        } else {
+            controls.style.display = 'flex';
         }
     }
-
+    
     if (tabBtn) {
         tabBtn.innerText = uiState.friendMode ? 'STATS' : 'SYSTEM';
-        tabBtn.style.color = '#00E676';
-        
         if (uiState.friendMode) {
-             tabBtn.style.boxShadow = '0 -5px 15px rgba(0, 230, 118, 0.4)';
+            tabBtn.style.color = '#00E676';
+            tabBtn.style.boxShadow = '0 -5px 15px rgba(0, 230, 118, 0.4)';
         } else {
-             tabBtn.style.boxShadow = '0 -4px 10px rgba(0, 230, 118, 0.2)';
+            tabBtn.style.color = '#00E676';
+            tabBtn.style.boxShadow = '0 -4px 10px rgba(0, 230, 118, 0.2)';
         }
+    }
+    
+    if (uiState.friendMode) {
+        renderFriendBody();
     }
 };
 
@@ -508,67 +545,45 @@ window.sendFriendMsg = async () => {
     if (!txt) return;
     
     input.value = ''; 
-
-    log.innerHTML += `<div style="margin-bottom:6px; text-align:right; padding:6px; background:#333; border-radius:4px; color:#aaa;"><b>Op:</b> ${txt}</div>`;
     
+    log.innerHTML += `<div style="text-align:right; margin:5px; color:#aaa;"><b>Op:</b> ${txt}</div>`;
     friendChatHistory.push({ role: 'user', content: `[message] ${txt}` });
     
-    log.scrollTop = log.scrollHeight;
-
     generateHiddenSummary(txt);
-
-    let dynamicSystemPrompt = BASE_FRIEND_PROMPT + "\n\n[Active Characters]:\n";
     
+    let sys = BASE_FRIEND_PROMPT + "\n[Chars]:";
     if (uiState.chatMode === 'group') {
-        globalData.characters.forEach(c => {
-            dynamicSystemPrompt += `- Name: ${c.name} (Color: ${c.color})\n  Personality: ${c.personality}\n`;
-        });
-        dynamicSystemPrompt += "\nMode: GROUP CHAT";
-    } else if (uiState.chatMode === 'route' && uiState.selectedCharId) {
-        const char = globalData.characters.find(c => c.id === uiState.selectedCharId);
-        if (char) {
-            dynamicSystemPrompt += `- Name: ${char.name} (Color: ${char.color})\n  Personality: ${char.personality}\n`;
-            dynamicSystemPrompt += "\nMode: ROUTE (Focus on this character)";
-        }
+        globalData.characters.forEach(c => sys += `\n${c.name} (${c.personality})`);
+    } else { 
+        const c = globalData.characters.find(x=>x.id===uiState.selectedCharId); 
+        if(c) sys += `\n${c.name} (${c.personality})`; 
     }
-
-    const currentSummary = globalData.routes[globalData.currentRouteId]?.summary || "No prior data.";
-    dynamicSystemPrompt += `\n\n[Global Memory]:\n${currentSummary}`;
-
-    const context = SillyTavern.getContext();
-    const lastMsg = context.chat && context.chat.length > 0 ? context.chat[context.chat.length-1] : { name: '?', mes: '' };
-    const cleanMes = stripHtmlToText(lastMsg.mes);
     
-    const payload = [
-        { role: 'system', content: dynamicSystemPrompt },
-        ...friendChatHistory,
-        { role: 'user', content: `(Story Context: ${lastMsg.name}: ${cleanMes})\n\n[message] ${txt}` }
-    ];
-
     const loadId = 'load-' + Date.now();
-    log.innerHTML += `<div id="${loadId}" style="color:#00E676; font-size:10px; margin:5px;">Processing...</div>`;
-    log.scrollTop = log.scrollHeight;
-
+    log.innerHTML += `<div id="${loadId}" style="color:#00E676; font-size:10px;">Processing...</div>`;
+    
     try {
         let reply = "";
         if (typeof SillyTavern.Generate === 'function') {
-            reply = await SillyTavern.Generate(payload, { quiet: true });
+            reply = await SillyTavern.Generate([
+                {role:'system',content:sys}, 
+                ...friendChatHistory, 
+                {role:'user',content:txt}
+            ], {quiet:true});
         } else {
-            reply = "⚠️ API Error.";
+            reply = "API Error";
         }
         
         document.getElementById(loadId).remove();
-        
         friendChatHistory.push({ role: 'assistant', content: reply });
-        
-        log.innerHTML += `<div style="margin-bottom:10px; padding:5px; border-radius:4px;">${reply}</div>`;
-        
-    } catch (e) {
-        document.getElementById(loadId).innerText = "Error: " + e.message;
+        log.innerHTML += `<div style="margin:5px; padding:5px; border-radius:4px; background:#222;">${reply}</div>`;
+    } catch(e) { 
+        document.getElementById(loadId).innerText = "Err"; 
     }
     
     log.scrollTop = log.scrollHeight;
-};// index.js - Part 4: UI Renderer
+};
+        // index.js - Part 4: UI Renderer
 
 // =================================================================
 // 5. CORE RENDERER (UI GENERATION)
@@ -581,7 +596,7 @@ const buildBaseUI = () => {
     ins.innerHTML = `
         <div id="holo-tab-btn" onclick="toggleTabMode()">SYSTEM</div>
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.60</span>
+            <span>🚀 CHRONOS V66.80</span>
             <span id="btn-close-panel" style="cursor:pointer; color:#ff4081;" onclick="closePanel()">✖</span>
         </div>
         
@@ -665,20 +680,28 @@ const renderLorebookList = () => {
     
     container.style.display = 'block';
     
+    // ถ้าไม่มีข้อมูล ให้ลองสแกนอีกรอบ (Safe guard)
+    if (!lorebookState.activeEntries || lorebookState.activeEntries.length === 0) {
+        manualScanLorebooks();
+    }
+    
     const active = lorebookState.activeEntries || [];
     
     if (active.length === 0) {
-        container.innerHTML = `<div style="color:#666; font-size:11px; text-align:center; padding:10px;">No Active World Info</div>`;
+        container.innerHTML = `
+            <div style="color:#666; font-size:11px; text-align:center; padding:10px;">
+                No Active World Info<br>
+                <span style="font-size:9px;">Status: ${lorebookState.scanStatus}</span>
+            </div>`;
         return;
     }
 
     let html = `<div style="font-size:10px; color:#00E676; margin-bottom:5px;">✅ ACTIVE (${active.length})</div>`;
     
     active.forEach(entry => {
-        // สร้าง HTML ตามสไตล์ที่ขอ (Strategy Icon + Name)
         html += `
             <div style="background:#1a1a1a; padding:6px; margin-bottom:4px; border-left:3px solid #00E676; font-size:11px; display:flex; align-items:flex-start; gap:8px;">
-                <div style="font-size:14px;">${entry.strategy}</div>
+                <div style="font-size:14px; min-width:20px;">${entry.strategy}</div>
                 <div>
                     <div style="color:#fff; font-weight:bold;">${entry.name}</div>
                     <div style="color:#aaa; font-size:9px;">
@@ -700,31 +723,22 @@ const renderFriendBody = () => {
         let html = `<div style="padding:10px; color:#ddd;">`;
         html += `<div style="font-size:11px; color:#C5A059; margin-bottom:5px;">CHAT MODE</div>`;
         html += `<div style="display:flex; gap:5px; margin-bottom:15px;">`;
-        
         html += `<button onclick="setChatMode('group')" class="mode-btn ${uiState.chatMode==='group'?'active':''}">👥 Group</button>`;
-        
         globalData.characters.forEach(c => {
              html += `<button onclick="setChatMode('route', ${c.id})" class="mode-btn ${uiState.chatMode==='route' && uiState.selectedCharId===c.id ? 'active' : ''}" style="border-color:${c.color}; color:${c.color}">${c.name}</button>`;
         });
         html += `</div>`;
-
         html += `<div style="font-size:11px; color:#C5A059; margin-bottom:5px;">CHARACTERS</div>`;
         globalData.characters.forEach(c => {
-            html += `<div class="char-row">
-                <span style="color:${c.color}">● ${c.name}</span>
-                <span style="font-size:9px; color:#666; cursor:pointer;" onclick="deleteCharacter(${c.id})">❌</span>
-            </div>`;
+            html += `<div class="char-row"><span style="color:${c.color}">● ${c.name}</span><span style="font-size:9px; color:#666; cursor:pointer;" onclick="deleteCharacter(${c.id})">❌</span></div>`;
         });
-
         html += `<div style="margin-top:10px; padding-top:10px; border-top:1px dashed #444;">
             <input id="new-char-name" placeholder="Name" style="width:100%; margin-bottom:5px; background:#111; color:#fff; border:1px solid #333;">
             <input id="new-char-color" type="color" style="width:100%; height:25px; margin-bottom:5px; background:#111; border:none;">
             <textarea id="new-char-desc" placeholder="Personality/Details..." style="width:100%; height:50px; background:#111; color:#fff; border:1px solid #333;"></textarea>
             <button onclick="saveNewCharacter()" style="width:100%; background:#333; color:#fff; border:1px solid #555; cursor:pointer;">+ Add Character</button>
         </div></div>`;
-        
         container.innerHTML = html;
-        
     } else {
         container.innerHTML = `<div id="friend-log" style="padding:10px; font-size:12px; color:#ccc; min-height:100%;">
             <div style="text-align:center; color:#555; margin-top:20px;">
@@ -735,7 +749,7 @@ const renderFriendBody = () => {
         </div>`;
     }
 };
-// index.js - Part 5: Update Loop & Styles (Full Code)
+        // index.js - Part 5: Update Loop & Styles
 
 // =================================================================
 // 6. UPDATE LOOP & STYLES
@@ -767,13 +781,14 @@ const updateUI = () => {
         lastRenderData.saved = stats.savedTokens;
     }
 
-    // 2. อัปเดต Rainbow Progress Bar (Active Lorebooks / Total Lorebooks)
-    // ดึงค่า total ล่าสุด เผื่อมีการโหลด WI เพิ่ม
+    // 2. อัปเดต Rainbow Progress Bar (Active / Total)
     if (typeof SillyTavern !== 'undefined' && SillyTavern.world_info) {
-        lorebookState.totalEntries = Object.values(SillyTavern.world_info).filter(e => !e.disable).length;
+        // นับจำนวน Lorebook ทั้งหมดที่เปิดใช้งาน
+        const all = Object.values(SillyTavern.world_info);
+        lorebookState.totalEntries = all.filter(e => !e.disable).length;
     }
 
-    // สูตรหลอด: Active / Total * 100
+    // สูตรหลอด: (Active / Total) * 100
     let percent = lorebookState.totalEntries > 0 
                   ? (lorebookState.activeCount / lorebookState.totalEntries) * 100 
                   : 0;
@@ -796,12 +811,10 @@ const updateUI = () => {
         lastRenderData.total = lorebookState.totalEntries;
     }
 
-    // 4. รีเฟรชรายการ Lorebook ถ้าเปิดอยู่
+    // 4. Refresh Lists
     if (uiState.showNumpad) {
         renderLorebookList();
     }
-
-    // 5. อัปเดตรายการข้อความแชท
     renderListSection();
 };
 
@@ -853,7 +866,9 @@ const renderViewerSection = () => {
 
 const injectStyles = () => {
     const exist = document.getElementById('chronos-style');
-    if (exist) exist.remove();
+    if (exist) {
+        exist.remove();
+    }
 
     const style = document.createElement('style');
     style.id = 'chronos-style';
@@ -894,7 +909,7 @@ const injectStyles = () => {
             0% { transform: rotate(0deg); }
             100% { transform: rotate(360deg); }
         }
-
+        
         /* --- WINDOW --- */
         #chronos-inspector {
             position: fixed;
@@ -1105,8 +1120,8 @@ const injectStyles = () => {
             overflow: hidden;
             text-overflow: ellipsis;
             color: #888;
-            transition: transform 0.2s ease, background 0.2s;
             border-left: 3px solid transparent;
+            transition: 0.2s;
         }
 
         .msg-item:hover {
@@ -1165,139 +1180,28 @@ const injectStyles = () => {
     document.head.appendChild(style);
 };
 
-const createUI = () => {
-    const oldOrb = document.getElementById('chronos-orb');
-    if (oldOrb) oldOrb.remove();
-    
-    const oldPanel = document.getElementById('chronos-inspector');
-    if (oldPanel) oldPanel.remove();
-    
-    const orb = document.createElement('div'); 
-    orb.id = 'chronos-orb'; 
-    orb.innerHTML = '🌌';
-    
-    const ins = document.createElement('div'); 
-    ins.id = 'chronos-inspector';
-    
-    document.body.appendChild(orb); 
-    document.body.appendChild(ins);
-    
-    const togglePanel = () => {
-        if (ins.style.display === 'none' || ins.style.display === '') {
-            ins.style.display = 'block';
-            orb.classList.add('active'); 
-            updateUI();
-        } else {
-            ins.style.display = 'none';
-            orb.classList.remove('active');
-        }
-    };
-    
-    makeDraggable(orb, 'orb', togglePanel); 
-    makeDraggable(ins, 'panel', null); 
-};
-
-const makeDraggable = (elm, type, clickCallback) => {
-    let offsetX = 0;
-    let offsetY = 0;
-    let isDragging = false;
-    let hasMoved = false;
-
-    // --- MOUSE EVENTS (PC) ---
-    elm.onmousedown = function(e) {
-        if (e.target.id === 'btn-close-panel') return;
-        if (type === 'panel' && !e.target.classList.contains('ins-header') && !e.target.parentElement.classList.contains('ins-header')) return;
-        
-        e.preventDefault();
-        
-        offsetX = e.clientX - elm.getBoundingClientRect().left;
-        offsetY = e.clientY - elm.getBoundingClientRect().top;
-        isDragging = true;
-        hasMoved = false;
-
-        document.onmousemove = function(e) {
-            if (!isDragging) return;
-            
-            if (type === 'orb' && !dragConfig.orbUnlocked) return;
-            if (type === 'panel' && !dragConfig.panelUnlocked) return;
-
-            hasMoved = true;
-            elm.style.left = (e.clientX - offsetX) + "px";
-            elm.style.top = (e.clientY - offsetY) + "px";
-        };
-
-        document.onmouseup = function() {
-            isDragging = false;
-            document.onmousemove = null;
-            document.onmouseup = null;
-            
-            if (!hasMoved && clickCallback) {
-                clickCallback();
-            }
-        };
-    };
-
-    // --- TOUCH EVENTS (MOBILE) ---
-    elm.addEventListener('touchstart', function(e) {
-        if (e.target.id === 'btn-close-panel') return;
-        if (type === 'panel' && !e.target.classList.contains('ins-header') && !e.target.parentElement.classList.contains('ins-header')) return;
-
-        e.stopPropagation(); 
-        e.preventDefault();
-
-        const touch = e.touches[0];
-        offsetX = touch.clientX - elm.getBoundingClientRect().left;
-        offsetY = touch.clientY - elm.getBoundingClientRect().top;
-        isDragging = true;
-        hasMoved = false;
-
-    }, { passive: false });
-
-    elm.addEventListener('touchmove', function(e) {
-        if (!isDragging) return;
-        
-        if (type === 'orb' && !dragConfig.orbUnlocked) return;
-        if (type === 'panel' && !dragConfig.panelUnlocked) return;
-        
-        e.preventDefault();
-        e.stopPropagation();
-
-        hasMoved = true;
-        const touch = e.touches[0];
-        elm.style.left = (touch.clientX - offsetX) + "px";
-        elm.style.top = (touch.clientY - offsetY) + "px";
-        
-    }, { passive: false });
-
-    elm.addEventListener('touchend', function(e) {
-        isDragging = false;
-        
-        if (!hasMoved && clickCallback) {
-            clickCallback();
-        }
-    });
-};
-
 // Start Extension
 (function() {
     injectStyles();
     
+    // UI Creation (Delayed to ensure DOM is ready)
     setTimeout(createUI, 2000); 
     
-    // Register Hooks & Event Listeners
+    // Register Hooks
     if (typeof SillyTavern !== 'undefined' && SillyTavern.extension_manager) {
         SillyTavern.extension_manager.register_hook('chat_completion_request', optimizePayload);
         SillyTavern.extension_manager.register_hook('text_completion_request', optimizePayload);
     }
 
+    // Register Event Source for Lorebook
     if (typeof SillyTavern !== 'undefined' && SillyTavern.eventSource) {
-        // ดักจับ Event ตอน Lorebook ทำงานจริง (ตามโค้ดต้นฉบับที่คุณให้มา)
         SillyTavern.eventSource.on('world_info_activated', (data) => {
             console.log('[Chronos] World Info Activated:', data);
             onWorldInfoActivated(data);
         });
     }
     
+    // Main Loop
     setInterval(() => {
         const ins = document.getElementById('chronos-inspector');
         if (ins && (ins.style.display === 'block' || ins.style.display === 'flex')) {
@@ -1305,7 +1209,3 @@ const makeDraggable = (elm, type, clickCallback) => {
         }
     }, 2000);
 })();
-
-
-
-
