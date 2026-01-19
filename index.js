@@ -1,7 +1,7 @@
-// index.js - Chronos V66.50 (Lorebook Event Listener Edition)
+// index.js - Chronos V66.60 (Full Restoration & Fixes)
 // Part 1: Config & Data
 
-const extensionName = "Chronos_Ultimate_V50";
+const extensionName = "Chronos_Ultimate_V60";
 
 // =================================================================
 // 0. HIDDEN PROMPTS
@@ -44,12 +44,11 @@ let uiState = {
     editingCharId: null
 };
 
-// เก็บข้อมูล Lorebook ตามแบบฉบับใหม่
+// เก็บข้อมูล Lorebook
 let lorebookState = {
     totalEntries: 0,
-    activeEntries: [], // รายการที่ทำงานจริง
-    activeCount: 0,
-    isScanning: false
+    activeEntries: [], 
+    activeCount: 0
 };
 
 let globalData = {
@@ -136,7 +135,7 @@ const stripHtmlToText = (html) => {
     return text;
 };
 
-// index.js - Part 2: Logic Core (Event Listener Integration)
+// index.js - Part 2: Logic Core
 
 // =================================================================
 // 2. HOOKS & EVENTS
@@ -167,17 +166,18 @@ const optimizePayload = (data) => {
 };
 
 // =================================================================
-// 3. LOREBOOK ENGINE (Hybrid: Event + Manual)
+// 3. LOREBOOK ENGINE (Event Listener)
 // =================================================================
 
-// 3.1 ฟังก์ชันรับ Event จาก SillyTavern (แม่นยำที่สุด)
+// ฟังก์ชันรับ Event จาก SillyTavern (แม่นยำที่สุด)
 const onWorldInfoActivated = (entryList) => {
     // entryList คือ array ของ lorebook ที่ทำงานจริงในรอบนี้
     if (!Array.isArray(entryList)) return;
 
     const mappedEntries = entryList.map(entry => {
-        // กำหนด Strategy Icon แบบโค้ดตัวอย่าง
+        // กำหนด Strategy Icon
         let strategyIcon = '🟢'; // Normal
+        // ตรวจสอบเงื่อนไข Constant
         if (entry.constant || (entry.position && entry.position.includes('constant'))) {
             strategyIcon = '🔵'; // Constant
         } else if (entry.vectorized) {
@@ -185,8 +185,7 @@ const onWorldInfoActivated = (entryList) => {
         }
 
         return {
-            name: entry.comment || entry.uid || "Untitled",
-            // ถ้าเป็น Constant จะไม่มี key ที่ทริกเกอร์ชัดเจน ให้ใส่เป็น Constant ไปเลย
+            name: entry.comment || entry.uid || entry.name || "Untitled",
             trigger: entry.constant ? "[Constant]" : (entry.key ? entry.key.toString() : "Unknown"),
             strategy: strategyIcon,
             content: entry.content
@@ -204,8 +203,7 @@ const onWorldInfoActivated = (entryList) => {
     updateUI();
 };
 
-
-// 3.2 ฟังก์ชันสแกนด้วยตัวเอง (ใช้ตอนกดปุ่ม Check)
+// ฟังก์ชันจำลองการสแกน (ใช้ตอนกดปุ่ม Check Manual)
 const manualScanLorebooks = () => {
     let entries = [];
     if (typeof SillyTavern !== 'undefined' && SillyTavern.world_info) {
@@ -274,7 +272,7 @@ const manualScanLorebooks = () => {
     lorebookState.activeCount = activeList.length;
 };
 
-// 3.3 Calculator เดิม (สำหรับ Token)
+// 3.3 Calculator (แก้ Token Saved ให้แม่นยำขึ้น)
 const calculateStats = () => {
     let chat = [];
     let context = {};
@@ -287,6 +285,7 @@ const calculateStats = () => {
     const maxTokens = findMaxContext(context);
     const tokenizer = getChronosTokenizer();
     
+    // ฟังก์ชันนับ Token แบบละเอียด
     const quickCount = (text) => {
         if (!text) return 0;
         if (tokenizer && typeof tokenizer.encode === 'function') {
@@ -296,38 +295,50 @@ const calculateStats = () => {
     };
 
     let totalSaved = 0;
-    let messageTokensArray = []; 
-
+    
     chat.forEach((msg) => {
         const rawMsg = msg.mes || "";
         let rawCount = quickCount(rawMsg);
         let cleanCount = 0;
         
+        // ถ้าเป็นข้อความที่มี HTML (System Generated) ให้ลอง strip ดูความต่าง
         if (/<[^>]+>|&lt;[^&]+&gt;/.test(rawMsg)) {
             const cleanText = stripHtmlToText(rawMsg);
+            // สมมติว่า System Content คือสิ่งที่ AI เห็น
             const formattedClean = `[System Content:\n${cleanText}]`;
             cleanCount = quickCount(formattedClean);
             
+            // ถ้าข้อความดิบยาวกว่าข้อความที่ Clean แล้ว แปลว่าส่วนต่างคือ HTML ที่ไม่ได้ส่งไป (หรือส่งไปน้อยลง)
+            // นี่คือค่า "Saved Tokens" โดยประมาณ
             if (rawCount > cleanCount) {
                 totalSaved += (rawCount - cleanCount);
             }
         } else {
+            // ข้อความปกติไม่มี Saved Token
             cleanCount = rawCount;
         }
-        
-        messageTokensArray.push(cleanCount);
     });
 
     let currentTotalUsage = context.tokens || 0;
-    if (currentTotalUsage === 0) {
-        currentTotalUsage = messageTokensArray.reduce((a,b) => a + b, 0);
-    }
-
+    
     return {
         savedTokens: totalSaved,
         max: maxTokens,
         currentLoad: currentTotalUsage
     };
+};
+
+const findMaxContext = (contextObj) => {
+    let max = 0;
+    if (contextObj.max_context && contextObj.max_context > 0) {
+        max = parseInt(contextObj.max_context);
+    } else if (typeof SillyTavern !== 'undefined' && SillyTavern.settings?.context_size) {
+        max = parseInt(SillyTavern.settings.context_size);
+    }
+    if (max === 0) {
+        max = 4096;
+    }
+    return max;
 };
 
 // index.js - Part 3: Interaction & Chat System
@@ -557,9 +568,7 @@ window.sendFriendMsg = async () => {
     }
     
     log.scrollTop = log.scrollHeight;
-};
-
-// index.js - Part 4: UI Renderer
+};// index.js - Part 4: UI Renderer
 
 // =================================================================
 // 5. CORE RENDERER (UI GENERATION)
@@ -572,7 +581,7 @@ const buildBaseUI = () => {
     ins.innerHTML = `
         <div id="holo-tab-btn" onclick="toggleTabMode()">SYSTEM</div>
         <div class="ins-header" id="panel-header">
-            <span>🚀 CHRONOS V66.50</span>
+            <span>🚀 CHRONOS V66.60</span>
             <span id="btn-close-panel" style="cursor:pointer; color:#ff4081;" onclick="closePanel()">✖</span>
         </div>
         
@@ -726,8 +735,7 @@ const renderFriendBody = () => {
         </div>`;
     }
 };
-
-// index.js - Part 5: Update Loop & Styles (Full Un-minified)
+// index.js - Part 5: Update Loop & Styles (Full Code)
 
 // =================================================================
 // 6. UPDATE LOOP & STYLES
@@ -752,17 +760,20 @@ const updateUI = () => {
 
     // 1. อัปเดต Saved Tokens
     if (stats.savedTokens !== lastRenderData.saved) {
-        document.getElementById('disp-saved').innerText = `${fmt(stats.savedTokens)} T`;
+        const elSaved = document.getElementById('disp-saved');
+        if (elSaved) {
+            elSaved.innerText = `${fmt(stats.savedTokens)} T`;
+        }
         lastRenderData.saved = stats.savedTokens;
     }
 
     // 2. อัปเดต Rainbow Progress Bar (Active Lorebooks / Total Lorebooks)
-    // สูตรใหม่: (Active / Total) * 100
     // ดึงค่า total ล่าสุด เผื่อมีการโหลด WI เพิ่ม
     if (typeof SillyTavern !== 'undefined' && SillyTavern.world_info) {
         lorebookState.totalEntries = Object.values(SillyTavern.world_info).filter(e => !e.disable).length;
     }
 
+    // สูตรหลอด: Active / Total * 100
     let percent = lorebookState.totalEntries > 0 
                   ? (lorebookState.activeCount / lorebookState.totalEntries) * 100 
                   : 0;
@@ -1294,4 +1305,7 @@ const makeDraggable = (elm, type, clickCallback) => {
         }
     }, 2000);
 })();
-    
+
+
+
+
